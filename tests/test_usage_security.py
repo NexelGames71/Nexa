@@ -16,11 +16,21 @@ class TestUsage:
         assert len(records) == 1
         record = records[0]
         assert record["status"] == "success"
-        assert record["user_id"] == "u-9"
-        assert record["model"] == "stepfun-ai/step-3.7-flash"
+        # Non-UUID synthetic ids (gateway keys, test ids) must be omitted:
+        # ai_requests.user_id is a UUID FK to auth.users.
+        assert "user_id" not in record
+        assert record["account_id"] == "u-9"
         assert record["provider"] == "nvidia"
         assert record["total_tokens"] > 0
         assert record["request_id"].startswith("nexa_req_")
+
+    async def test_uuid_user_id_recorded(self, client, supabase):
+        uuid_id = "123e4567-e89b-12d3-a456-426614174000"
+        supabase.add_user("tok", user_id=uuid_id, plan="pro")
+        await client.post("/v1/chat/completions", json=VALID_CHAT_BODY,
+                          headers=auth_header("tok"))
+        record = supabase.inserted[0][1]
+        assert record["user_id"] == uuid_id
 
     async def test_failure_recorded(self, client, supabase, nvidia):
         supabase.add_user("tok", plan="pro")
@@ -116,6 +126,27 @@ class TestSecurity:
 
 
 class TestValidation:
+    async def test_tools_forwarded_to_provider(self, client, supabase, nvidia):
+        supabase.add_user("tok", plan="pro")
+        tools = [{"type": "function", "function": {
+            "name": "write_file", "parameters": {"type": "object"}}}]
+        response = await client.post(
+            "/v1/chat/completions",
+            json={**VALID_CHAT_BODY, "tools": tools, "tool_choice": "auto"},
+            headers=auth_header("tok"))
+        assert response.status_code == 200
+        sent = nvidia.calls[-1]
+        assert sent.extras.get("tools") == tools
+        assert sent.extras.get("tool_choice") == "auto"
+
+    async def test_invalid_tools_rejected(self, client, supabase):
+        supabase.add_user("tok", plan="pro")
+        response = await client.post(
+            "/v1/chat/completions",
+            json={**VALID_CHAT_BODY, "tools": "nope"},
+            headers=auth_header("tok"))
+        assert response.status_code == 400
+
     async def test_missing_messages(self, client, supabase):
         supabase.add_user("tok", plan="pro")
         response = await client.post(

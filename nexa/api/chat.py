@@ -37,7 +37,8 @@ MAX_MESSAGES = 256
 
 
 class ChatCompletionBody:
-    __slots__ = ("model", "messages", "temperature", "max_tokens", "stream", "account_id")
+    __slots__ = ("model", "messages", "temperature", "max_tokens", "stream",
+                 "account_id", "extras")
 
     def __init__(self, data: dict[str, Any]) -> None:
         self.model = data.get("model")
@@ -46,6 +47,24 @@ class ChatCompletionBody:
         self.max_tokens = data.get("max_tokens")
         self.stream = bool(data.get("stream", False))
         self.account_id = data.get("account_id")
+        self.extras: dict[str, Any] = {}
+
+    def collect_extras(self, data: dict[str, Any]) -> None:
+        """Forward OpenAI-compatible optional fields to the provider.
+
+        `tools`/`tool_choice` are essential: native function-calling breaks
+        silently without them. The rest are standard sampling controls and
+        the reasoning extensions some NIM models accept.
+        """
+        passthrough = (
+            "tools", "tool_choice", "top_p", "stop", "response_format",
+            "presence_penalty", "frequency_penalty", "seed", "logprobs",
+            "top_logprobs", "reasoning_effort", "reasoning_budget",
+            "chat_template_kwargs",
+        )
+        for key in passthrough:
+            if key in data and data[key] is not None:
+                self.extras[key] = data[key]
 
 
 def parse_body(data: Any) -> ChatCompletionBody:
@@ -81,6 +100,22 @@ def parse_body(data: Any) -> ChatCompletionBody:
     if body.max_tokens is not None:
         if not isinstance(body.max_tokens, int) or not (1 <= body.max_tokens <= 32768):
             raise NexaError(INVALID_REQUEST, "'max_tokens' must be an integer between 1 and 32768")
+
+    body.collect_extras(data)
+    if "tools" in body.extras:
+        tools = body.extras["tools"]
+        if not isinstance(tools, list) or not all(isinstance(t, dict) for t in tools):
+            raise NexaError(INVALID_REQUEST, "'tools' must be an array of tool objects")
+        if len(tools) > 128:
+            raise NexaError(INVALID_REQUEST, "'tools' exceeds maximum of 128")
+    if "tool_choice" in body.extras:
+        choice = body.extras["tool_choice"]
+        if not isinstance(choice, (str, dict)):
+            raise NexaError(INVALID_REQUEST, "'tool_choice' must be a string or object")
+    if "top_p" in body.extras:
+        top_p = body.extras["top_p"]
+        if not isinstance(top_p, (int, float)) or not (0 < top_p <= 1):
+            raise NexaError(INVALID_REQUEST, "'top_p' must be between 0 and 1")
 
     return body
 
@@ -138,6 +173,7 @@ async def chat_completions(
         max_tokens=body.max_tokens,
         stream=body.stream,
         stream_options={"include_usage": True} if body.stream else None,
+        extras=body.extras,
     )
 
     concurrency_cap = policy.concurrent_generations
