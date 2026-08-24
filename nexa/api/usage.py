@@ -34,7 +34,7 @@ async def get_usage(
     overrides = await state.policies._overrides(identity.account_id)
 
     monthly_limit = overrides.monthly_token_limit or policy.monthly_token_limit
-    usage = await state.supabase.monthly_usage(identity.account_id)
+    usage, persistence_ok = await state.supabase.monthly_usage(identity.account_id)
     total_used = int(usage.get("total_tokens", 0))
 
     models = []
@@ -52,6 +52,10 @@ async def get_usage(
     return {
         "plan": identity.plan,
         "plan_rank": PLAN_RANK.get(identity.plan, 0),
+        "persistence": "ok" if persistence_ok else "unavailable",
+        "persistence_hint": None if persistence_ok else (
+            "Usage storage is not active. Apply supabase/migrations/"
+            "0001_full_nexcoder_nexa.sql and 0002_usage_rpc.sql."),
         "limits": {
             "requests_per_minute": overrides.requests_per_minute
             or policy.requests_per_minute,

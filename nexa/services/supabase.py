@@ -175,13 +175,18 @@ class SupabaseService:
 
     async def monthly_tokens_used(self, account_id: str) -> int:
         """Sum of total tokens this calendar month from ai_requests (best effort)."""
-        data = await self.monthly_usage(account_id)
+        data, _ok = await self.monthly_usage(account_id)
         return int(data.get("total_tokens", 0))
 
-    async def monthly_usage(self, account_id: str) -> dict[str, int]:
-        """Requests + token totals for this calendar month (best effort)."""
+    async def monthly_usage(self, account_id: str) -> tuple[dict[str, int], bool]:
+        """Requests + token totals for this calendar month.
+
+        Returns (usage, persistence_ok): persistence_ok is False when the
+        RPC/table is missing so callers can surface a configuration warning
+        instead of silently showing zeros.
+        """
         if not self.settings.usage_persistence_configured:
-            return {}
+            return {}, False
         url = f"{self.settings.supabase_url}/rest/v1/rpc/ai_monthly_usage"
         headers = {
             "apikey": self.settings.supabase_service_role_key,
@@ -193,7 +198,7 @@ class SupabaseService:
                     url, json={"p_account_id": account_id}, headers=headers
                 )
             if response.status_code == 200 and isinstance(response.json(), dict):
-                return response.json()
+                return response.json(), True
         except Exception as exc:  # noqa: BLE001
             logger.debug("monthly usage lookup skipped: %s", type(exc).__name__)
-        return {}
+        return {}, False

@@ -55,8 +55,8 @@ class TestUsageEndpoint:
         supabase.add_user("tok", user_id="u-5", plan=PRO)
 
         async def fake_usage(account_id):
-            return {"requests": 12, "input_tokens": 100,
-                    "output_tokens": 50, "total_tokens": 150}
+            return ({"requests": 12, "input_tokens": 100,
+                     "output_tokens": 50, "total_tokens": 150}, True)
 
         supabase.monthly_usage = fake_usage
         response = await client.get("/v1/usage", headers=auth_header("tok"))
