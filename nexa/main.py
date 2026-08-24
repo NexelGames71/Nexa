@@ -6,6 +6,7 @@ mounted by Vercel's Python runtime. No Vercel-specific APIs are used.
 
 from __future__ import annotations
 
+import logging
 import time
 
 from fastapi import FastAPI, Request
@@ -21,6 +22,7 @@ from nexa.context import RequestContext, configure_logging, log_request, new_req
 from nexa.errors import INTERNAL_ERROR, NexaError
 from nexa.policies.concurrency import ConcurrencyManager
 from nexa.policies.service import PolicyService
+from nexa.policies.usage_windows import UsageService
 from nexa.providers.nvidia import NVIDIAProvider
 from nexa.routing.catalog import catalog_payload  # noqa: F401
 from nexa.services.supabase import SupabaseService
@@ -30,6 +32,7 @@ from nexa.services.usage import UsageTracker
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging()
+    logger = logging.getLogger("nexa")
 
     supabase = SupabaseService(settings)
     authenticator = Authenticator(
@@ -41,6 +44,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     concurrency = ConcurrencyManager()
     nvidia = NVIDIAProvider(settings)
     usage = UsageTracker(supabase)
+    usage_windows = UsageService(supabase)
 
     state = NexaState(
         settings=settings,
@@ -50,6 +54,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         supabase=supabase,
         concurrency=concurrency,
         providers={nvidia.name: nvidia},
+        usage_windows=usage_windows,
     )
 
     app = FastAPI(

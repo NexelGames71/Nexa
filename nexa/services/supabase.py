@@ -108,6 +108,91 @@ class SupabaseService:
             logger.warning("plan lookup failed: %s", type(exc).__name__)
         return None
 
+    # -- usage windows -----------------------------------------------------------
+
+    async def authorize_usage(
+        self, *, account_id: str, five_hour_limit: int, weekly_limit: int,
+        weekly_renewal_count: int, units: int, request_id: str,
+    ) -> dict | None:
+        """Atomic authorize+reserve via PL/pgSQL (row locks). None = RPC failed."""
+        url = f"{self.settings.supabase_url}/rest/v1/rpc/ai_authorize_usage"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        payload = {
+            "p_account_id": account_id,
+            "p_five_hour_limit": five_hour_limit,
+            "p_weekly_limit": weekly_limit,
+            "p_weekly_renewal_count": weekly_renewal_count,
+            "p_units": units,
+            "p_request_id": request_id,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.post(url, json=payload, headers=headers)
+            if response.status_code == 200:
+                return response.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("authorize_usage rpc failed: %s", type(exc).__name__)
+        return None
+
+    async def finalize_usage(self, request_id: str, actual_units: int) -> bool:
+        url = f"{self.settings.supabase_url}/rest/v1/rpc/ai_finalize_usage"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.post(
+                    url, json={"p_request_id": request_id,
+                               "p_actual_units": max(0, int(actual_units))},
+                    headers=headers)
+            return response.status_code == 200
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("finalize_usage rpc failed: %s", type(exc).__name__)
+            return False
+
+    async def release_usage(self, request_id: str) -> bool:
+        url = f"{self.settings.supabase_url}/rest/v1/rpc/ai_release_usage"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.post(
+                    url, json={"p_request_id": request_id}, headers=headers)
+            return response.status_code == 200
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("release_usage rpc failed: %s", type(exc).__name__)
+            return False
+
+    async def get_usage_state(
+        self, account_id: str, five_hour_limit: int, weekly_limit: int,
+        weekly_renewal_count: int,
+    ) -> dict | None:
+        """Fetch (and lazily initialize) the account's usage state row."""
+        url = f"{self.settings.supabase_url}/rest/v1/rpc/ai_get_usage_state"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.post(url, json={
+                    "p_account_id": account_id,
+                    "p_five_hour_limit": five_hour_limit,
+                    "p_weekly_limit": weekly_limit,
+                    "p_weekly_renewal_count": weekly_renewal_count,
+                }, headers=headers)
+            if response.status_code == 200:
+                return response.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("get_usage_state rpc failed: %s", type(exc).__name__)
+        return None
+
     # -- persistence ------------------------------------------------------------
 
     async def insert_usage(self, table: str, record: dict[str, Any]) -> bool:

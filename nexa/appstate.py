@@ -9,6 +9,7 @@ from nexa.auth import Authenticator
 from nexa.config import Settings
 from nexa.policies.concurrency import ConcurrencyManager
 from nexa.policies.service import PolicyService
+from nexa.policies.usage_windows import UsageService
 from nexa.providers.base import AIProvider
 from nexa.services.supabase import SupabaseService
 from nexa.services.usage import UsageTracker
@@ -23,6 +24,7 @@ class NexaState:
     supabase: SupabaseService
     concurrency: ConcurrencyManager
     providers: dict[str, AIProvider]
+    usage_windows: UsageService
     version: str = "0.1.0"
 
     def registry_items(self):

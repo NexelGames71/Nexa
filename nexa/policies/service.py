@@ -88,13 +88,22 @@ class PolicyService:
             )
 
     def validate_context_size(self, identity: AuthIdentity, messages: list[dict]) -> None:
-        policy = self.plan_policy(identity)
-        total_chars = sum(len(str(m.get("content", ""))) for m in messages)
+        """Guard against pathological payloads only.
+
+        The client owns context compaction (it knows the real model window);
+        a strict plan-level rejection here breaks legitimate agent runs whose
+        history the client already compacted. We only block payloads so large
+        that they cannot plausibly fit any catalog model.
+        """
+        total_chars = sum(
+            len(str(m.get("content", ""))) for m in messages
+        )
         estimated_tokens = total_chars // 3
-        if estimated_tokens > policy.maximum_context:
+        hard_ceiling = 180_000  # ~540k chars; far beyond every catalog model
+        if estimated_tokens > hard_ceiling:
             raise InvalidRequestError(
-                "Context exceeds maximum allowed for your plan",
-                details={"maximum_context": policy.maximum_context},
+                "Context exceeds the maximum supported request size",
+                details={"maximum_context": hard_ceiling},
             )
 
     async def enforce_monthly_tokens(self, identity: AuthIdentity, policy: PlanPolicy) -> int:

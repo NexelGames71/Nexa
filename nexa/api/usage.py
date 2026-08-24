@@ -36,6 +36,7 @@ async def get_usage(
     monthly_limit = overrides.monthly_token_limit or policy.monthly_token_limit
     usage, persistence_ok = await state.supabase.monthly_usage(identity.account_id)
     total_used = int(usage.get("total_tokens", 0))
+    windows = await state.usage_windows.snapshot(identity.account_id, policy)
 
     models = []
     for m in CATALOG:
@@ -74,6 +75,9 @@ async def get_usage(
             "total_tokens": total_used,
         },
         "remaining_tokens": max(0, monthly_limit - total_used),
+        # 5-hour + weekly windows (server-authoritative; spec §14/§21).
+        "five_hour": windows["five_hour"],
+        "weekly": windows["weekly"],
         "models": models,
         "upgrade_url": "https://nexcoder.trynexa-ai.com/pricing",
     }

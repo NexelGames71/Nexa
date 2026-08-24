@@ -17,6 +17,11 @@ class PlanPolicy:
     monthly_token_limit: int
     allowed_models: frozenset[str]
     maximum_context: int
+    # Usage windows (token units): fast 5-hour allowance + slower weekly
+    # allowance with exactly one complimentary renewal per weekly cycle.
+    five_hour_limit: int = 0
+    weekly_limit: int = 0
+    weekly_renewal_count: int = 1
 
 
 _ALL_MODELS = frozenset({
@@ -41,6 +46,9 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         monthly_token_limit=200_000,
         allowed_models=_ENTRY_MODELS,
         maximum_context=8_192,
+        five_hour_limit=50_000,
+        weekly_limit=200_000,
+        weekly_renewal_count=1,
     ),
     "plus": PlanPolicy(
         id="plus",
@@ -50,6 +58,9 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         monthly_token_limit=2_000_000,
         allowed_models=_ALL_MODELS,
         maximum_context=16_384,
+        five_hour_limit=250_000,
+        weekly_limit=1_000_000,
+        weekly_renewal_count=1,
     ),
     "pro": PlanPolicy(
         id="pro",
@@ -59,6 +70,9 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         monthly_token_limit=10_000_000,
         allowed_models=_ALL_MODELS,
         maximum_context=32_768,
+        five_hour_limit=750_000,
+        weekly_limit=3_000_000,
+        weekly_renewal_count=1,
     ),
     "premium": PlanPolicy(
         id="premium",
@@ -68,6 +82,9 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         monthly_token_limit=30_000_000,
         allowed_models=_ALL_MODELS,
         maximum_context=65_536,
+        five_hour_limit=2_000_000,
+        weekly_limit=8_000_000,
+        weekly_renewal_count=1,
     ),
     "business-standard": PlanPolicy(
         id="business-standard",
@@ -77,6 +94,9 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         monthly_token_limit=60_000_000,
         allowed_models=_ALL_MODELS,
         maximum_context=65_536,
+        five_hour_limit=4_000_000,
+        weekly_limit=15_000_000,
+        weekly_renewal_count=1,
     ),
     "business-plus": PlanPolicy(
         id="business-plus",
@@ -86,6 +106,9 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         monthly_token_limit=150_000_000,
         allowed_models=_ALL_MODELS,
         maximum_context=131_072,
+        five_hour_limit=8_000_000,
+        weekly_limit=30_000_000,
+        weekly_renewal_count=1,
     ),
     "enterprise": PlanPolicy(
         id="enterprise",
@@ -95,6 +118,9 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         monthly_token_limit=500_000_000,
         allowed_models=_ALL_MODELS,
         maximum_context=131_072,
+        five_hour_limit=20_000_000,
+        weekly_limit=75_000_000,
+        weekly_renewal_count=1,
     ),
 }
 

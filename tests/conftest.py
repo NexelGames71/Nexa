@@ -124,6 +124,8 @@ def state(supabase: FakeSupabase, nvidia: FakeNVIDIAProvider) -> NexaState:
     authenticator = Authenticator(supabase, {}, settings.default_plan)
     policies = PolicyService(settings, supabase)
     usage = UsageTracker(supabase)
+    from nexa.policies.usage_windows import UsageService
+
     return NexaState(
         settings=settings,
         authenticator=authenticator,
@@ -132,6 +134,7 @@ def state(supabase: FakeSupabase, nvidia: FakeNVIDIAProvider) -> NexaState:
         supabase=supabase,
         concurrency=ConcurrencyManager(),
         providers={nvidia.name: nvidia},
+        usage_windows=UsageService(supabase),
     )
 
 

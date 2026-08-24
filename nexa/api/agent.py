@@ -117,6 +117,25 @@ async def agent_run(
     ]
 
     state.concurrency.acquire_generation_slot(identity.account_id, policy.concurrent_generations)
+    estimated_units = max(1, (len(body["task"]) + len(body["task"]) // 3) // 3)
+    decision = await state.usage_windows.authorize(
+        identity.account_id, policy, estimated_units, ctx.request_id)
+    if not decision.allowed:
+        state.concurrency.release_generation_slot(identity.account_id)
+        from nexa.errors import FIVE_HOUR_LIMIT_REACHED, WEEKLY_LIMIT_REACHED
+        from datetime import datetime, timezone
+        code = (FIVE_HOUR_LIMIT_REACHED if decision.window == "five_hour"
+                else WEEKLY_LIMIT_REACHED)
+        message = ("Your 5-hour usage limit has been reached."
+                   if decision.window == "five_hour"
+                   else "Your weekly usage limit has been reached.")
+        reset_iso = datetime.fromtimestamp(
+            decision.reset_at or time.time(), tz=timezone.utc).isoformat()
+        error = NexaError(code, message, details={
+            "reset_at": reset_iso,
+            "retry_after_seconds": decision.retry_after_seconds})
+        error.headers = {"Retry-After": str(max(1, decision.retry_after_seconds))}
+        raise error
     try:
         response = await provider.chat(
             ChatRequest(model=provider_model, messages=messages, temperature=0.2,
@@ -126,6 +145,9 @@ async def agent_run(
         state.concurrency.release_generation_slot(identity.account_id)
 
     usage = response.usage
+    await state.usage_windows.finalize(
+        identity.account_id, ctx.request_id,
+        usage.total_tokens if usage else estimated_units)
     await state.usage.record(ctx, usage=usage, status="success")
     log_request(ctx, "success")
 

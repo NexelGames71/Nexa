@@ -20,9 +20,11 @@ from nexa.auth import AuthIdentity, apply_identity, ensure_account_match
 from nexa.context import RequestContext, log_request
 from nexa.errors import (
     CLIENT_CANCELLED,
+    FIVE_HOUR_LIMIT_REACHED,
     INTERNAL_ERROR,
     INVALID_REQUEST,
     PROVIDER_UNAVAILABLE,
+    WEEKLY_LIMIT_REACHED,
     NexaError,
 )
 from nexa.policies.plans import PlanPolicy
@@ -161,10 +163,35 @@ async def chat_completions(
     policy = await state.policies.enforce_rate_limits(identity, client_ip(http_request))
     state.policies.check_model_allowed(identity, body.model)
     state.policies.validate_context_size(identity, body.messages)
-    await state.policies.enforce_monthly_tokens(identity, policy)
 
     provider_name, provider_model = resolve_route(state.settings, body.model)
     provider = state.providers[provider_name]
+
+    # Usage windows: reserve estimated input tokens before the provider call.
+    # Idempotent per request_id; finalized with real token usage afterwards.
+    estimated_units = max(1, sum(
+        len(str(m.get("content", ""))) for m in body.messages
+    ) // 3)
+    decision = await state.usage_windows.authorize(
+        identity.account_id, policy, estimated_units, ctx.request_id)
+    if not decision.allowed:
+        code = (FIVE_HOUR_LIMIT_REACHED if decision.window == "five_hour"
+                else WEEKLY_LIMIT_REACHED)
+        message = ("Your 5-hour usage limit has been reached."
+                   if decision.window == "five_hour"
+                   else "Your weekly usage limit has been reached.")
+        from datetime import datetime, timezone
+        reset_iso = datetime.fromtimestamp(
+            decision.reset_at or time.time(), tz=timezone.utc).isoformat()
+        error = NexaError(
+            code, message,
+            details={"reset_at": reset_iso,
+                     "retry_after_seconds": decision.retry_after_seconds,
+                     "renewal_available": code == WEEKLY_LIMIT_REACHED and False},
+        )
+        error.headers = {"Retry-After": str(max(1, decision.retry_after_seconds))}
+        await state.usage.record(ctx, status="error", error_code=code)
+        raise error
 
     chat_request = ChatRequest(
         model=provider_model,
@@ -192,6 +219,8 @@ async def chat_completions(
             )
         response = await provider.chat(chat_request)
         usage = response.usage or await _estimate_usage(body.messages, response.content or "")
+        await state.usage_windows.finalize(
+            identity.account_id, ctx.request_id, usage.total_tokens)
         await state.usage.record(ctx, usage=usage, status="success")
         message: dict[str, Any] = {"role": "assistant", "content": response.content}
         if response.tool_calls:
@@ -217,6 +246,7 @@ async def chat_completions(
             }
         )
     except NexaError as exc:
+        await state.usage_windows.release(identity.account_id, ctx.request_id)
         await state.usage.record(ctx, status="error", error_code=exc.code)
         raise
     except Exception as exc:  # noqa: BLE001
@@ -225,6 +255,7 @@ async def chat_completions(
         logging.getLogger("nexa.api.chat").exception(
             "chat completion failed request_id=%s", ctx.request_id
         )
+        await state.usage_windows.release(identity.account_id, ctx.request_id)
         internal = type(exc).__name__
         await state.usage.record(ctx, status="error", error_code=INTERNAL_ERROR)
         raise NexaError(INTERNAL_ERROR, "Internal error", internal=internal) from exc
@@ -317,6 +348,9 @@ async def _stream_response(
         )
         yield "data: [DONE]\n\n"
 
+        await state.usage_windows.finalize(
+            ctx.account_id or "", ctx.request_id,
+            final_usage.total_tokens)
         await state.usage.record(ctx, usage=final_usage, status="success")
         log_request(ctx, "success")
     except NexaError as exc:
@@ -325,6 +359,7 @@ async def _stream_response(
             yield "data: [DONE]\n\n"
         except Exception:  # client already gone
             pass
+        await state.usage_windows.release(ctx.account_id or "", ctx.request_id)
         await state.usage.record(ctx, status="error", error_code=exc.code)
         log_request(ctx, "error", error=exc)
     except Exception:
@@ -335,9 +370,11 @@ async def _stream_response(
             yield _error_sse(normalized)
             yield "data: [DONE]\n\n"
         except Exception:  # client cancelled / disconnected
+            await state.usage_windows.release(ctx.account_id or "", ctx.request_id)
             await state.usage.record(ctx, status="cancelled",
                                      error_code=CLIENT_CANCELLED)
             return
+        await state.usage_windows.release(ctx.account_id or "", ctx.request_id)
         await state.usage.record(ctx, status="error", error_code=normalized.code)
         log_request(ctx, "error", error=normalized)
 
