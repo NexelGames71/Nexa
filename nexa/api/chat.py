@@ -29,7 +29,7 @@ from nexa.policies.plans import PlanPolicy
 from nexa.policies.plans import PlanPolicy as _PlanPolicy  # noqa: F401
 from nexa.providers.base import ChatRequest, Usage
 from nexa.providers.registry import resolve_route
-from nexa.routing.catalog import known_logical_model
+from nexa.routing.catalog import known_model
 
 router = APIRouter()
 
@@ -55,7 +55,7 @@ def parse_body(data: Any) -> ChatCompletionBody:
 
     if not body.model or not isinstance(body.model, str):
         raise NexaError(INVALID_REQUEST, "Missing or invalid 'model'")
-    if not known_logical_model(body.model):
+    if not known_model(body.model):
         raise NexaError(INVALID_REQUEST, "Invalid model identifier")
 
     if not isinstance(body.messages, list) or not body.messages:
@@ -292,3 +292,4 @@ async def _stream_response(
             return
         await state.usage.record(ctx, status="error", error_code=normalized.code)
         log_request(ctx, "error", error=normalized)
+

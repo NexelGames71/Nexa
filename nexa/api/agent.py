@@ -22,7 +22,7 @@ from nexa.context import RequestContext, log_request
 from nexa.errors import INTERNAL_ERROR, INVALID_REQUEST, NexaError
 from nexa.providers.base import ChatRequest
 from nexa.providers.registry import resolve_route
-from nexa.routing.catalog import known_logical_model
+from nexa.routing.catalog import known_model
 
 router = APIRouter()
 
@@ -38,8 +38,8 @@ def _validate_agent_body(data: Any) -> dict[str, Any]:
     if not isinstance(task, str) or not task.strip():
         raise NexaError(INVALID_REQUEST, "'task' must be a non-empty string")
 
-    model = data.get("model", "nexa-agent")
-    if not isinstance(model, str) or not known_logical_model(model):
+    model = data.get("model", "nvidia/nemotron-3-ultra-550b-a55b")
+    if not isinstance(model, str) or not known_model(model):
         raise NexaError(INVALID_REQUEST, "Invalid model identifier")
 
     context = data.get("context", {})
@@ -155,3 +155,4 @@ async def agent_run_stream(http_request: Request):
     """Reserved: streaming agent turns will reuse the chat streaming path."""
     raise NexaError("NOT_IMPLEMENTED", "Streaming agent runs arrive in a later milestone",
                     http_status=501)
+

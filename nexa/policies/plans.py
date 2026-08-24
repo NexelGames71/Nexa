@@ -19,7 +19,18 @@ class PlanPolicy:
     maximum_context: int
 
 
-_ALL_MODELS = frozenset({"nexa-code", "nexa-general", "nexa-agent"})
+_ALL_MODELS = frozenset({
+    "stepfun-ai/step-3.7-flash",
+    "nvidia/nemotron-3-ultra-550b-a55b",
+    "nvidia/nemotron-3-super-120b-a12b",
+    "deepseek-ai/deepseek-v4-flash-0731",
+})
+
+# Lighter/cheaper models available on the entry plan.
+_ENTRY_MODELS = frozenset({
+    "stepfun-ai/step-3.7-flash",
+    "deepseek-ai/deepseek-v4-flash-0731",
+})
 
 PLAN_POLICIES: dict[str, PlanPolicy] = {
     "starter": PlanPolicy(
@@ -28,7 +39,7 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         requests_per_hour=50,
         concurrent_generations=1,
         monthly_token_limit=200_000,
-        allowed_models=frozenset({"nexa-general"}),
+        allowed_models=_ENTRY_MODELS,
         maximum_context=8_192,
     ),
     "plus": PlanPolicy(
@@ -73,7 +84,7 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         requests_per_hour=6_000,
         concurrent_generations=24,
         monthly_token_limit=150_000_000,
-        allowed_models=_ALL_MODELS | {"nexa-agent"},
+        allowed_models=_ALL_MODELS,
         maximum_context=131_072,
     ),
     "enterprise": PlanPolicy(
@@ -90,3 +101,4 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
 
 def get_plan_policy(plan_id: str) -> PlanPolicy:
     return PLAN_POLICIES.get(plan_id) or PLAN_POLICIES["starter"]
+

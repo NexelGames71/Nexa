@@ -49,15 +49,15 @@ class TestPolicyEnforcement:
                 await service.enforce_rate_limits(ident, None)
 
     async def test_model_not_allowed_for_plan(self, client, supabase):
-        supabase.add_user("tok", plan="starter")  # only nexa-general
-        body = {**VALID_CHAT_BODY, "model": "nexa-code"}
+        supabase.add_user("tok", plan="starter")  # entry plan: flash models only
+        body = {**VALID_CHAT_BODY, "model": "nvidia/nemotron-3-ultra-550b-a55b"}
         response = await client.post(
             "/v1/chat/completions", json=body, headers=auth_header("tok")
         )
         assert response.status_code == 402
         assert response.json()["error"]["code"] == "USAGE_LIMIT"
 
-    async def test_unknown_logical_model_rejected(self, client, supabase):
+    async def test_unknown_model_rejected(self, client, supabase):
         supabase.add_user("tok", plan="pro")
         body = {**VALID_CHAT_BODY, "model": "gpt-4o"}
         response = await client.post(
@@ -119,7 +119,7 @@ class TestConcurrency:
         nvidia.fail_with = RuntimeError("boom")
         bad = await client.post(
             "/v1/chat/completions",
-            json={"model": "nexa-general",
+            json={"model": "stepfun-ai/step-3.7-flash",
                   "messages": [{"role": "user", "content": "x"}], "stream": True},
             headers=auth_header("tok"),
         )
@@ -132,3 +132,4 @@ class TestConcurrency:
             headers=auth_header("tok"),
         )
         assert good.status_code == 200
+

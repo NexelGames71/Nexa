@@ -1,7 +1,7 @@
-"""Provider registry: resolve logical models to providers.
+"""Provider registry: resolve model ids to providers.
 
-Adding a new provider means implementing AIProvider and registering it here.
-No Nexcoder-facing code changes required.
+Model ids are the real NVIDIA NIM identifiers end-to-end. Adding a new
+provider means implementing AIProvider and registering it here.
 """
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ from __future__ import annotations
 from nexa.config import Settings
 from nexa.errors import MODEL_UNAVAILABLE, NexaError
 from nexa.providers.base import AIProvider
+from nexa.routing.catalog import known_model
 
 
 class ProviderRegistry:
@@ -34,13 +35,14 @@ def build_default_registry(settings: Settings, nvidia_provider: AIProvider) -> P
     return registry
 
 
-def resolve_route(settings: Settings, logical_model: str) -> tuple[str, str]:
-    """Map a logical model to (provider_name, provider_model).
+def resolve_route(settings: Settings, model_id: str) -> tuple[str, str]:
+    """Map a catalog model id to (provider_name, provider_model).
 
-    Raises MODEL_UNAVAILABLE for unknown logical models so clients get a
-    stable error instead of an upstream 404.
+    By default the id passes through unchanged to NVIDIA. An explicit
+    override may be set via NEXA_MODEL_ROUTES as `model-id=provider-model`
+    pairs (useful for canary swaps without a redeploy of clients).
+    Raises MODEL_UNAVAILABLE for unknown ids so clients get a stable error.
     """
-    provider_model = settings.resolve_provider_model(logical_model)
-    if provider_model is None:
+    if not known_model(model_id):
         raise NexaError(MODEL_UNAVAILABLE, "Invalid model identifier")
-    return "nvidia", provider_model
+    return "nvidia", settings.resolve_provider_model(model_id)

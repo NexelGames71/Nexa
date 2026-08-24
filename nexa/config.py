@@ -86,8 +86,10 @@ class Settings:
                 keys[token] = (account_id, plan)
         return keys
 
-    def resolve_provider_model(self, logical_model: str) -> str | None:
-        return self.model_routes.get(logical_model) or self.nvidia_default_model or None
+    def resolve_provider_model(self, model_id: str) -> str:
+        """Model ids pass through to the provider unchanged unless an
+        explicit override exists in NEXA_MODEL_ROUTES."""
+        return self.model_routes.get(model_id) or model_id
 
 
 @lru_cache(maxsize=1)

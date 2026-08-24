@@ -30,7 +30,7 @@ class TestStreaming:
         supabase.add_user("tok", plan="pro")
         response = await client.post(
             "/v1/chat/completions",
-            json={"model": "nexa-general",
+            json={"model": "stepfun-ai/step-3.7-flash",
                   "messages": [{"role": "user", "content": "hi"}],
                   "stream": True},
             headers=auth_header("tok"),
@@ -62,7 +62,7 @@ class TestStreaming:
 
         response = await client.post(
             "/v1/chat/completions",
-            json={"model": "nexa-general",
+            json={"model": "stepfun-ai/step-3.7-flash",
                   "messages": [{"role": "user", "content": "hi"}],
                   "stream": True},
             headers=auth_header("tok"),
@@ -83,7 +83,7 @@ class TestStreaming:
         supabase.add_user("tok", plan="pro")
         await client.post(
             "/v1/chat/completions",
-            json={"model": "nexa-general",
+            json={"model": "stepfun-ai/step-3.7-flash",
                   "messages": [{"role": "user", "content": "hi"}],
                   "stream": True},
             headers=auth_header("tok"),
@@ -98,7 +98,7 @@ class TestNonStreaming:
         supabase.add_user("tok", plan="pro")
         response = await client.post(
             "/v1/chat/completions",
-            json={"model": "nexa-general", "temperature": 0.5, "max_tokens": 128,
+            json={"model": "stepfun-ai/step-3.7-flash", "temperature": 0.5, "max_tokens": 128,
                   "messages": [{"role": "user", "content": "hi"}]},
             headers={**auth_header("tok")},
         )
@@ -106,3 +106,4 @@ class TestNonStreaming:
         body = response.json()
         assert body["choices"][0]["message"]["content"] == "ok"
         assert body["usage"]["total_tokens"] == 5
+

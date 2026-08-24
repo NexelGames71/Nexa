@@ -35,16 +35,17 @@ Send `Authorization: Bearer <credential>`:
 Client-supplied user/account IDs are never trusted as authentication; a body
 claiming a different `account_id` is rejected (`AUTHORIZATION_FAILED`).
 
-## Logical models
+## Models
 
-Clients request logical ids — never provider model ids:
+Clients use the real NVIDIA NIM model ids end-to-end (see `GET /v1/models`):
 
-- `nexa-code` → configured NVIDIA coding model
-- `nexa-general` → fast general model
-- `nexa-agent` → agentic workloads
+- `stepfun-ai/step-3.7-flash` — Step 3.7 Flash (fast, vision)
+- `nvidia/nemotron-3-ultra-550b-a55b` — Nemotron 3 Ultra (flagship reasoning)
+- `nvidia/nemotron-3-super-120b-a12b` — Nemotron 3 Super (balanced)
+- `deepseek-ai/deepseek-v4-flash-0731` — DeepSeek V4 Flash (efficient coding)
 
-Routes are set via `NEXA_MODEL_ROUTES=nexa-code=meta/llama-3.1-70b-instruct,...`
-and optionally overridden per-deployment by the `ai_model_catalog` table.
+Ids pass through to the provider unchanged. To swap a mapping without a
+client update, set `NEXA_MODEL_ROUTES=<id>=<new-provider-model>,...`.
 
 ## Policies
 
@@ -123,7 +124,7 @@ never logged.
 
 ```
 NEXA_API_URL=https://api.trynexa-ai.com/v1
-NEXA_MODEL=nexa-general
+NEXA_MODEL=stepfun-ai/step-3.7-flash
 NEXA_API_KEY=<gateway credential>
 ```
 

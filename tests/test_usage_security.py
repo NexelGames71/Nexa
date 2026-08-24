@@ -17,7 +17,7 @@ class TestUsage:
         record = records[0]
         assert record["status"] == "success"
         assert record["user_id"] == "u-9"
-        assert record["model"] == "nexa-general"
+        assert record["model"] == "stepfun-ai/step-3.7-flash"
         assert record["provider"] == "nvidia"
         assert record["total_tokens"] > 0
         assert record["request_id"].startswith("nexa_req_")
@@ -27,7 +27,7 @@ class TestUsage:
         nvidia.fail_with = RuntimeError("boom")
         await client.post(
             "/v1/chat/completions",
-            json={"model": "nexa-general",
+            json={"model": "stepfun-ai/step-3.7-flash",
                   "messages": [{"role": "user", "content": "hi"}],
                   "stream": True},
             headers=auth_header("tok"),
@@ -40,7 +40,7 @@ class TestUsage:
         secret = "TOPSECRET-CONTENT-1234"
         await client.post(
             "/v1/chat/completions",
-            json={"model": "nexa-general",
+            json={"model": "stepfun-ai/step-3.7-flash",
                   "messages": [{"role": "user", "content": secret}]},
             headers=auth_header("tok"),
         )
@@ -81,7 +81,7 @@ class TestSecurity:
         supabase.add_user("tok", plan="starter")
         response = await client.post(
             "/v1/chat/completions",
-            json={**VALID_CHAT_BODY, "model": "nexa-agent"},
+            json={**VALID_CHAT_BODY, "model": "nvidia/nemotron-3-ultra-550b-a55b"},
             headers=auth_header("tok"),
         )
         assert response.status_code in (402, 403)
@@ -119,7 +119,7 @@ class TestValidation:
     async def test_missing_messages(self, client, supabase):
         supabase.add_user("tok", plan="pro")
         response = await client.post(
-            "/v1/chat/completions", json={"model": "nexa-general"},
+            "/v1/chat/completions", json={"model": "stepfun-ai/step-3.7-flash"},
             headers=auth_header("tok"))
         assert response.status_code == 400
 
@@ -164,7 +164,7 @@ class TestAgent:
             "/v1/agent/run",
             json={
                 "task": "refactor module X",
-                "model": "nexa-agent",
+                "model": "nvidia/nemotron-3-ultra-550b-a55b",
                 "context": {"repo": "demo"},
                 "tools": [{"name": "read_file"}],
                 "workspace": {"path": "D:/proj"},
@@ -176,3 +176,4 @@ class TestAgent:
         assert body["status"] == "completed"
         assert body["pending_tools"] == []  # never executes tools server-side
         assert body["declared_tools"] == ["read_file"]
+

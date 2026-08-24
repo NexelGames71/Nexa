@@ -26,7 +26,7 @@ def provider_with(handler) -> NVIDIAProvider:
     settings = Settings(
         nvidia_api_key="test-key",
         nvidia_base_url="https://integrate.api.nvidia.com/v1",
-        nvidia_default_model="meta/llama-3.1-70b-instruct",
+        nvidia_default_model="stepfun-ai/step-3.7-flash",
     )
     provider = NVIDIAProvider(settings)
     original_client = _ORIGINAL_ASYNC_CLIENT
@@ -55,7 +55,7 @@ class TestChat:
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.headers["authorization"] == "Bearer test-key"
             return httpx.Response(200, json={
-                "model": "meta/llama-3.1-70b-instruct",
+                "model": "stepfun-ai/step-3.7-flash",
                 "choices": [{"message": {"content": "hello"},
                              "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": 5, "completion_tokens": 2},
@@ -157,3 +157,4 @@ class TestHealth:
 
         provider = provider_with(handler)
         assert await provider.health() is False
+

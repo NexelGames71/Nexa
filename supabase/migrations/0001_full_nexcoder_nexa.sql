@@ -191,7 +191,7 @@ create table if not exists public.ai_requests (
   user_id        uuid references auth.users (id) on delete set null,
   account_id     text,
   provider       text not null default 'nvidia',
-  model          text,                                  -- logical model id (nexa-code etc.)
+  model          text,                                  -- model id from the catalog
   started_at     timestamptz not null default now(),
   completed_at   timestamptz,
   input_tokens   integer not null default 0,
@@ -240,7 +240,7 @@ create index if not exists ai_usage_account_day_idx on public.ai_usage (account_
 -- 6c. ai_model_catalog -- dynamic overrides for GET /v1/models routing.
 -- ----------------------------------------------------------------------------
 create table if not exists public.ai_model_catalog (
-  logical_id     text primary key,        -- nexa-code | nexa-general | nexa-agent | ...
+  logical_id     text primary key,        -- e.g. stepfun-ai/step-3.7-flash | ...
   display_name   text,
   capabilities   text[] not null default '{}',
   provider       text not null default 'nvidia',
@@ -251,10 +251,15 @@ create table if not exists public.ai_model_catalog (
 );
 
 insert into public.ai_model_catalog (logical_id, display_name, capabilities, provider_model, sort_order) values
-  ('nexa-code',    'Nexa Code',    '{chat,code,streaming,tools}', 'meta/llama-3.1-70b-instruct', 1),
-  ('nexa-general', 'Nexa General', '{chat,streaming}',            'meta/llama-3.1-8b-instruct',  2),
-  ('nexa-agent',   'Nexa Agent',   '{chat,code,streaming,tools}', 'meta/llama-3.1-70b-instruct', 3)
-on conflict (logical_id) do nothing;
+  ('stepfun-ai/step-3.7-flash',              'Step 3.7 Flash',   '{chat,code,streaming,vision}', 'stepfun-ai/step-3.7-flash',              1),
+  ('nvidia/nemotron-3-ultra-550b-a55b',      'Nemotron 3 Ultra', '{chat,code,streaming,tools}',  'nvidia/nemotron-3-ultra-550b-a55b',      2),
+  ('nvidia/nemotron-3-super-120b-a12b',      'Nemotron 3 Super', '{chat,code,streaming,tools}',  'nvidia/nemotron-3-super-120b-a12b',      3),
+  ('deepseek-ai/deepseek-v4-flash-0731',     'DeepSeek V4 Flash','{chat,code,streaming}',        'deepseek-ai/deepseek-v4-flash-0731',     4)
+on conflict (logical_id) do update set
+  display_name = excluded.display_name,
+  capabilities = excluded.capabilities,
+  provider_model = excluded.provider_model,
+  sort_order = excluded.sort_order;
 
 -- ----------------------------------------------------------------------------
 -- 6d. ai_account_limits -- per-account policy overrides read by Nexa.

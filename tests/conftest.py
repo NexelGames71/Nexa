@@ -95,11 +95,13 @@ class FakeNVIDIAProvider(AIProvider):
 def make_settings() -> Settings:
     return Settings(
         nvidia_base_url="https://integrate.api.nvidia.com/v1",
-        nvidia_default_model="meta/llama-3.1-70b-instruct",
+        nvidia_default_model="stepfun-ai/step-3.7-flash",
         model_routes={
-            "nexa-code": "meta/llama-3.1-70b-instruct",
-            "nexa-general": "meta/llama-3.1-8b-instruct",
-            "nexa-agent": "meta/llama-3.1-70b-instruct",
+            # Identity mapping: ids pass through unchanged.
+            "stepfun-ai/step-3.7-flash": "stepfun-ai/step-3.7-flash",
+            "nvidia/nemotron-3-ultra-550b-a55b": "nvidia/nemotron-3-ultra-550b-a55b",
+            "nvidia/nemotron-3-super-120b-a12b": "nvidia/nemotron-3-super-120b-a12b",
+            "deepseek-ai/deepseek-v4-flash-0731": "deepseek-ai/deepseek-v4-flash-0731",
         },
         allowed_origins=["http://localhost:3000"],
         default_plan="starter",
@@ -143,7 +145,7 @@ async def client(state: NexaState) -> AsyncIterator[AsyncClient]:
 
 
 VALID_CHAT_BODY = {
-    "model": "nexa-general",
+    "model": "stepfun-ai/step-3.7-flash",
     "messages": [{"role": "user", "content": "hi"}],
 }
 
