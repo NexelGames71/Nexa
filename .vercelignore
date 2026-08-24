@@ -13,3 +13,9 @@ deploy
 *.md
 Dockerfile
 docker-compose.yml
+.env.local
+.vercel
+nexa_gateway.egg-info
+uv.lock
+.python-version
+nexa.egg-info
