@@ -1,0 +1,17 @@
+# Automatic HTTPS via Let's Encrypt. Replace the hostname if you use a
+# different API domain. Streaming (SSE) passes through untouched: Caddy does
+# not buffer responses, and flush_interval -1 forces chunked flushing.
+api.trynexa-ai.com {
+	encode zstd gzip
+
+	reverse_proxy nexa:8000 {
+		flush_interval -1
+	}
+
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+}

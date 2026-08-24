@@ -1,0 +1,195 @@
+"""Supabase REST access: token verification, profile/plan lookup, usage writes.
+
+Uses only httpx against Supabase's REST surfaces (auth + PostgREST) so Nexa
+stays dependency-light and portable. The service-role key never leaves the
+server process.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any
+
+import httpx
+
+from nexa.config import Settings
+
+logger = logging.getLogger("nexa.supabase")
+
+# Cache verified users for a short window to avoid a REST round-trip per
+# request while still respecting token revocation reasonably quickly.
+_VERIFY_TTL_SECONDS = 300.0
+
+
+class SupabaseService:
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self._verify_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+    # -- auth ---------------------------------------------------------------
+
+    async def verify_access_token(self, token: str) -> dict[str, Any] | None:
+        """Verify a Supabase access token; return identity or None.
+
+        Returns a trusted identity dict: user_id, email, account_id.
+        Never trusts client-supplied identity fields.
+        """
+        now = time.monotonic()
+        cached = self._verify_cache.get(token)
+        if cached is not None:
+            expires_at, identity = cached
+            if expires_at > now:
+                return identity
+            del self._verify_cache[token]
+
+        identity = await self._verify_via_rest(token)
+        if identity is not None:
+            self._verify_cache[token] = (now + _VERIFY_TTL_SECONDS, identity)
+            if len(self._verify_cache) > 10_000:
+                cutoff = now - _VERIFY_TTL_SECONDS
+                self._verify_cache = {
+                    k: v for k, v in self._verify_cache.items() if v[0] > cutoff
+                }
+        return identity
+
+    async def _verify_via_rest(self, token: str) -> dict[str, Any] | None:
+        if not self.settings.supabase_configured:
+            return None
+        url = f"{self.settings.supabase_url}/auth/v1/user"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "apikey": self.settings.supabase_anon_key,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(url, headers=headers)
+            if response.status_code != 200:
+                return None
+            data = response.json()
+        except Exception as exc:  # noqa: BLE001 — auth must fail closed safely
+            logger.warning("supabase verify error: %s", type(exc).__name__)
+            return None
+
+        user_id = data.get("id")
+        if not user_id:
+            return None
+        return {
+            "user_id": user_id,
+            "email": data.get("email", ""),
+            "account_id": user_id,  # personal accounts: account == user
+        }
+
+    # -- plans / profiles -----------------------------------------------------
+
+    async def get_user_plan(self, user_id: str) -> str | None:
+        """Read profiles.plan for a user using the service-role key."""
+        if not self.settings.usage_persistence_configured:
+            return None
+        url = f"{self.settings.supabase_url}/rest/v1/profiles"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    url,
+                    params={"id": f"eq.{user_id}", "select": "plan"},
+                    headers=headers,
+                )
+            if response.status_code != 200:
+                return None
+            rows = response.json()
+            if isinstance(rows, list) and rows:
+                plan = rows[0].get("plan")
+                return str(plan) if plan else None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("plan lookup failed: %s", type(exc).__name__)
+        return None
+
+    # -- persistence ------------------------------------------------------------
+
+    async def insert_usage(self, table: str, record: dict[str, Any]) -> bool:
+        """Best-effort insert into an ai_* table via PostgREST."""
+        if not self.settings.usage_persistence_configured:
+            return False
+        url = f"{self.settings.supabase_url}/rest/v1/{table}"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+            "Prefer": "return=minimal",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(url, json=record, headers=headers)
+            return response.status_code in (200, 201, 204)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("usage insert failed: %s", type(exc).__name__)
+            return False
+
+    async def get_account_limit_overrides(self, account_id: str) -> dict[str, Any] | None:
+        if not self.settings.usage_persistence_configured:
+            return None
+        url = f"{self.settings.supabase_url}/rest/v1/ai_account_limits"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    url,
+                    params={"account_id": f"eq.{account_id}", "select": "*"},
+                    headers=headers,
+                )
+            if response.status_code != 200:
+                return None
+            rows = response.json()
+            return rows[0] if isinstance(rows, list) and rows else None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("limit override lookup failed: %s", type(exc).__name__)
+            return None
+
+    async def get_model_catalog_rows(self) -> list[dict[str, Any]]:
+        """Optional dynamic catalog overrides from ai_model_catalog."""
+        if not self.settings.usage_persistence_configured:
+            return []
+        url = f"{self.settings.supabase_url}/rest/v1/ai_model_catalog"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    url,
+                    params={"enabled": "eq.true", "select": "*"},
+                    headers=headers,
+                )
+            if response.status_code == 200 and isinstance(response.json(), list):
+                return response.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("model catalog lookup skipped: %s", type(exc).__name__)
+        return []
+
+    async def monthly_tokens_used(self, account_id: str) -> int:
+        """Sum of total tokens this calendar month from ai_requests (best effort)."""
+        if not self.settings.usage_persistence_configured:
+            return 0
+        url = f"{self.settings.supabase_url}/rest/v1/rpc/ai_monthly_tokens"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(
+                    url, json={"p_account_id": account_id}, headers=headers
+                )
+            if response.status_code == 200:
+                value = response.json()
+                return int(value) if value is not None else 0
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("monthly tokens lookup skipped: %s", type(exc).__name__)
+        return 0

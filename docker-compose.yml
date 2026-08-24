@@ -1,0 +1,43 @@
+services:
+  nexa:
+    build: .
+    container_name: nexa
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NEXA_ENV: production
+      # Keep at 1 until you switch the rate-limit/concurrency store to Redis
+      # (REDIS_URL); with >1 worker each process keeps its own counters, so
+      # limits would only be approximately enforced.
+      UVICORN_WORKERS: "1"
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/health', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: nexa-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - nexa
+
+volumes:
+  caddy_data:
+  caddy_config:
