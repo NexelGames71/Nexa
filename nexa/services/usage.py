@@ -6,6 +6,7 @@ Records metadata only — never prompts or responses.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -15,6 +16,9 @@ from nexa.providers.base import Usage
 from nexa.services.supabase import SupabaseService
 
 logger = logging.getLogger("nexa.usage")
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
 
 @dataclass
@@ -41,7 +45,9 @@ class UsageRecord:
 
         row = {
             "request_id": self.request_id,
-            "user_id": self.user_id,
+            # user_id is a UUID FK to auth.users: gateway-key identities use
+            # synthetic account ids, so only real UUIDs may be written.
+            "user_id": self.user_id if self.user_id and _UUID_RE.match(self.user_id) else None,
             "account_id": self.account_id,
             "provider": self.provider,
             "model": self.model,
