@@ -250,6 +250,7 @@ async def _stream_response(
     """Forward upstream SSE chunks to the client as they arrive."""
     content_parts: list[str] = []
     final_usage: Usage | None = None
+    upstream_finish: str | None = None
     started = True
 
     try:
@@ -266,11 +267,16 @@ async def _stream_response(
                     input_tokens=int(usage_raw.get("prompt_tokens", 0)),
                     output_tokens=int(usage_raw.get("completion_tokens", 0)),
                 )
+            if choices[0].get("finish_reason"):
+                upstream_finish = choices[0].get("finish_reason")
 
             if started:
                 yield _sse({"id": ctx.request_id, "object": "chat.completion.chunk", "model": ctx.model})
                 started = False
 
+            # Forward the delta VERBATIM — tool_calls fragments, reasoning
+            # fields and content all belong to the client. Rebuilding the
+            # delta here strips native tool-calling and breaks agents.
             payload = {
                 "id": ctx.request_id,
                 "object": "chat.completion.chunk",
@@ -279,7 +285,7 @@ async def _stream_response(
                 "choices": [
                     {
                         "index": 0,
-                        "delta": {"role": "assistant", **({"content": piece} if piece else {})},
+                        "delta": delta,
                         "finish_reason": choices[0].get("finish_reason"),
                     }
                 ],
@@ -295,7 +301,10 @@ async def _stream_response(
                 "object": "chat.completion.chunk",
                 "created": int(time.time()),
                 "model": ctx.model,
-                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                # Preserve the upstream finish reason ("stop", "tool_calls",
+                # "length") — clients branch on it for tool-call handling.
+                "choices": [{"index": 0, "delta": {},
+                             "finish_reason": upstream_finish or "stop"}],
                 "usage": {
                     "prompt_tokens": final_usage.input_tokens,
                     "completion_tokens": final_usage.output_tokens,

@@ -50,6 +50,48 @@ class TestStreaming:
         final = [e for e in events[:-1] if e.get("usage")]
         assert final and final[-1]["usage"]["total_tokens"] == 15
 
+    async def test_tool_call_deltas_forwarded_verbatim(self, client, supabase, nvidia):
+        supabase.add_user("tok", plan="pro")
+        nvidia.stream_chunks = [
+            {"choices": [{"delta": {"role": "assistant", "tool_calls": [
+                {"index": 0, "id": "call_1", "type": "function",
+                 "function": {"name": "write_file", "arguments": "{\"path\":"}}]}}]},
+            {"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "function": {"arguments": "\"x\"}"}}]}}]},
+            {"choices": [{"delta": {}, "finish_reason": "tool_calls"}],
+             "usage": {"prompt_tokens": 8, "completion_tokens": 6}},
+        ]
+        response = await client.post(
+            "/v1/chat/completions",
+            json={"model": "stepfun-ai/step-3.7-flash",
+                  "messages": [{"role": "user", "content": "hi"}],
+                  "stream": True},
+            headers=auth_header("tok"),
+        )
+        events = parse_sse(response.text)
+        chunks = [e for e in events if isinstance(e, dict) and e.get("choices")]
+        merged_calls: dict[int, dict] = {}
+        for chunk in chunks:
+            for fragment in chunk["choices"][0]["delta"].get("tool_calls") or []:
+                slot = merged_calls.setdefault(fragment.get("index", 0),
+                                               {"type": "function", "function": {}})
+                if fragment.get("id"):
+                    slot["id"] = fragment["id"]
+                fn = fragment.get("function") or {}
+                if fn.get("name"):
+                    slot["function"]["name"] = fn["name"]
+                if fn.get("arguments"):
+                    slot["function"]["arguments"] = slot["function"].get("arguments", "") + fn["arguments"]
+        assert merged_calls, "tool_calls fragments must survive the gateway"
+        call = merged_calls[0]
+        assert call["function"]["name"] == "write_file"
+        assert call["function"]["arguments"] == '{"path":"x"}'
+        assert call["id"] == "call_1"
+        # Upstream finish_reason must not be overridden with "stop".
+        finish_reasons = [c["choices"][0].get("finish_reason") for c in chunks
+                          if c["choices"][0].get("finish_reason")]
+        assert finish_reasons[-1] == "tool_calls"
+
     async def test_provider_disconnect_mid_stream(self, client, supabase, nvidia):
         supabase.add_user("tok", plan="pro")
 
@@ -106,4 +148,5 @@ class TestNonStreaming:
         body = response.json()
         assert body["choices"][0]["message"]["content"] == "ok"
         assert body["usage"]["total_tokens"] == 5
+
 
