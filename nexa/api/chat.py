@@ -20,6 +20,7 @@ from nexa.auth import AuthIdentity, apply_identity, ensure_account_match
 from nexa.context import RequestContext, log_request
 from nexa.errors import (
     CLIENT_CANCELLED,
+    DAILY_LIMIT_REACHED,
     FIVE_HOUR_LIMIT_REACHED,
     INTERNAL_ERROR,
     INVALID_REQUEST,
@@ -175,11 +176,14 @@ async def chat_completions(
     decision = await state.usage_windows.authorize(
         identity.account_id, policy, estimated_units, ctx.request_id)
     if not decision.allowed:
-        code = (FIVE_HOUR_LIMIT_REACHED if decision.window == "five_hour"
-                else WEEKLY_LIMIT_REACHED)
-        message = ("Your 5-hour usage limit has been reached."
-                   if decision.window == "five_hour"
-                   else "Your weekly usage limit has been reached.")
+        code = {
+            "five_hour": FIVE_HOUR_LIMIT_REACHED,
+            "daily": DAILY_LIMIT_REACHED,
+        }.get(decision.window or "", WEEKLY_LIMIT_REACHED)
+        message = {
+            "five_hour": "Your 5-hour usage limit has been reached.",
+            "daily": "Your daily usage limit has been reached.",
+        }.get(decision.window or "", "Your weekly usage limit has been reached.")
         from datetime import datetime, timezone
         reset_iso = datetime.fromtimestamp(
             decision.reset_at or time.time(), tz=timezone.utc).isoformat()

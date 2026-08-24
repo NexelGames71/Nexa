@@ -45,9 +45,9 @@ class TestUsageEndpoint:
         limits = body["limits"]
         assert limits["requests_per_minute"] == 30
         assert limits["concurrent_generations"] == 4
-        assert limits["monthly_token_limit"] == 10_000_000
+        assert limits["monthly_token_limit"] == 200_000_000
         assert body["usage"]["requests"] == 0
-        assert body["remaining_tokens"] == 10_000_000
+        assert body["remaining_tokens"] == 200_000_000
         assert len(body["models"]) == 4
         assert body["upgrade_url"].startswith("https://")
 
@@ -63,7 +63,7 @@ class TestUsageEndpoint:
         body = response.json()
         assert body["usage"]["requests"] == 12
         assert body["usage"]["total_tokens"] == 150
-        assert body["remaining_tokens"] == 10_000_000 - 150
+        assert body["remaining_tokens"] == 200_000_000 - 150
 
     async def test_starter_usage_shows_upgrade_models(self, client, supabase):
         supabase.add_user("tok", plan=STARTER)

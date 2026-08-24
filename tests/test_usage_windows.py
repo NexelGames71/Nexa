@@ -17,13 +17,14 @@ class _NoDbSupabase:
         usage_persistence_configured = False
 
 
-def policy(five_hour=100, weekly=1000, renewal=1) -> PlanPolicy:
+def policy(five_hour=100, daily=100_000, weekly=1000, renewal=1) -> PlanPolicy:
     base = PlanPolicy(
         id="test", requests_per_minute=1000, requests_per_hour=100000,
         concurrent_generations=10, monthly_token_limit=10**9,
         allowed_models=frozenset({"stepfun-ai/step-3.7-flash"}),
         maximum_context=180_000)
     return PlanPolicy(**{**base.__dict__, "five_hour_limit": five_hour,
+                         "daily_limit": daily,
                          "weekly_limit": weekly,
                          "weekly_renewal_count": renewal})
 
@@ -162,16 +163,27 @@ class TestConcurrencyAndIdempotency:
 
 
 class TestHttpEnforcement:
-    async def test_five_hour_limit_http_response(self, client, supabase):
+    async def test_five_hour_limit_http_response(self, client, supabase, nvidia):
         supabase.add_user("tok", plan="starter")
-        # Starter five_hour_limit = 50_000 tokens; payload estimate chars//3.
-        big = "x" * (50_000 * 3 + 3)
-        response = await client.post(
-            "/v1/chat/completions",
-            json={"model": "stepfun-ai/step-3.7-flash",
-                  "messages": [{"role": "user", "content": big}]},
-            headers=auth_header("tok"))
-        assert response.status_code == 429
+        # Provider reports ~180k real tokens per call, so finalized usage
+        # (not just reservations) accumulates toward the 500k starter limit.
+        from nexa.providers.base import ChatResponse, Usage as PUsage
+
+        async def big_chat(request):
+            return ChatResponse(content="ok", model=request.model,
+                                usage=PUsage(input_tokens=180_000, output_tokens=0))
+        nvidia.chat = big_chat
+        big = "x" * (180_000 * 3)
+        statuses = []
+        for _ in range(3):
+            response = await client.post(
+                "/v1/chat/completions",
+                json={"model": "stepfun-ai/step-3.7-flash",
+                      "messages": [{"role": "user", "content": big}]},
+                headers=auth_header("tok"))
+            statuses.append(response.status_code)
+        assert statuses[:2] == [200, 200]
+        assert statuses[2] == 429
         body = response.json()["error"]
         assert body["code"] == "FIVE_HOUR_LIMIT_REACHED"
         assert "reset_at" in body["details"]

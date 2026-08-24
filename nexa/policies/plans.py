@@ -1,6 +1,11 @@
 """Centralized plan policies.
 
 Plan limits live here and only here. API routes never embed plan logic.
+
+Usage windows (token units, input + output counted):
+  five_hour_limit — fast rolling allowance, resets 5h after first use
+  daily_limit     — calendar-rolling 24h allowance
+  weekly_limit    — 7-day cycle, headline quota, one complimentary renewal
 """
 
 from __future__ import annotations
@@ -17,9 +22,8 @@ class PlanPolicy:
     monthly_token_limit: int
     allowed_models: frozenset[str]
     maximum_context: int
-    # Usage windows (token units): fast 5-hour allowance + slower weekly
-    # allowance with exactly one complimentary renewal per weekly cycle.
     five_hour_limit: int = 0
+    daily_limit: int = 0
     weekly_limit: int = 0
     weekly_renewal_count: int = 1
 
@@ -43,11 +47,12 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         requests_per_minute=5,
         requests_per_hour=50,
         concurrent_generations=1,
-        monthly_token_limit=200_000,
+        monthly_token_limit=20_000_000,
         allowed_models=_ENTRY_MODELS,
         maximum_context=8_192,
-        five_hour_limit=50_000,
-        weekly_limit=200_000,
+        five_hour_limit=500_000,
+        daily_limit=1_000_000,
+        weekly_limit=5_000_000,
         weekly_renewal_count=1,
     ),
     "plus": PlanPolicy(
@@ -55,11 +60,12 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         requests_per_minute=10,
         requests_per_hour=200,
         concurrent_generations=2,
-        monthly_token_limit=2_000_000,
+        monthly_token_limit=100_000_000,
         allowed_models=_ALL_MODELS,
         maximum_context=16_384,
-        five_hour_limit=250_000,
-        weekly_limit=1_000_000,
+        five_hour_limit=2_000_000,
+        daily_limit=4_000_000,
+        weekly_limit=20_000_000,
         weekly_renewal_count=1,
     ),
     "pro": PlanPolicy(
@@ -67,11 +73,12 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         requests_per_minute=30,
         requests_per_hour=600,
         concurrent_generations=4,
-        monthly_token_limit=10_000_000,
+        monthly_token_limit=200_000_000,
         allowed_models=_ALL_MODELS,
         maximum_context=32_768,
-        five_hour_limit=750_000,
-        weekly_limit=3_000_000,
+        five_hour_limit=5_000_000,
+        daily_limit=10_000_000,
+        weekly_limit=50_000_000,
         weekly_renewal_count=1,
     ),
     "premium": PlanPolicy(
@@ -79,11 +86,12 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         requests_per_minute=60,
         requests_per_hour=1_500,
         concurrent_generations=8,
-        monthly_token_limit=30_000_000,
+        monthly_token_limit=600_000_000,
         allowed_models=_ALL_MODELS,
         maximum_context=65_536,
-        five_hour_limit=2_000_000,
-        weekly_limit=8_000_000,
+        five_hour_limit=12_000_000,
+        daily_limit=25_000_000,
+        weekly_limit=120_000_000,
         weekly_renewal_count=1,
     ),
     "business-standard": PlanPolicy(
@@ -91,11 +99,12 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         requests_per_minute=120,
         requests_per_hour=3_000,
         concurrent_generations=12,
-        monthly_token_limit=60_000_000,
+        monthly_token_limit=1_000_000_000,
         allowed_models=_ALL_MODELS,
         maximum_context=65_536,
-        five_hour_limit=4_000_000,
-        weekly_limit=15_000_000,
+        five_hour_limit=20_000_000,
+        daily_limit=40_000_000,
+        weekly_limit=200_000_000,
         weekly_renewal_count=1,
     ),
     "business-plus": PlanPolicy(
@@ -103,11 +112,12 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         requests_per_minute=240,
         requests_per_hour=6_000,
         concurrent_generations=24,
-        monthly_token_limit=150_000_000,
+        monthly_token_limit=2_000_000_000,
         allowed_models=_ALL_MODELS,
         maximum_context=131_072,
-        five_hour_limit=8_000_000,
-        weekly_limit=30_000_000,
+        five_hour_limit=40_000_000,
+        daily_limit=80_000_000,
+        weekly_limit=400_000_000,
         weekly_renewal_count=1,
     ),
     "enterprise": PlanPolicy(
@@ -115,11 +125,12 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         requests_per_minute=600,
         requests_per_hour=15_000,
         concurrent_generations=64,
-        monthly_token_limit=500_000_000,
+        monthly_token_limit=5_000_000_000,
         allowed_models=_ALL_MODELS,
         maximum_context=131_072,
-        five_hour_limit=20_000_000,
-        weekly_limit=75_000_000,
+        five_hour_limit=100_000_000,
+        daily_limit=200_000_000,
+        weekly_limit=1_000_000_000,
         weekly_renewal_count=1,
     ),
 }
@@ -149,4 +160,3 @@ def minimum_plan_for_model(model_id: str) -> str | None:
         if model_id in policy.allowed_models
     ]
     return min(candidates)[1] if candidates else None
-

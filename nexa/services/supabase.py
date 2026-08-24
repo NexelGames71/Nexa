@@ -111,8 +111,9 @@ class SupabaseService:
     # -- usage windows -----------------------------------------------------------
 
     async def authorize_usage(
-        self, *, account_id: str, five_hour_limit: int, weekly_limit: int,
-        weekly_renewal_count: int, units: int, request_id: str,
+        self, *, account_id: str, five_hour_limit: int, daily_limit: int,
+        weekly_limit: int, weekly_renewal_count: int, units: int,
+        request_id: str,
     ) -> dict | None:
         """Atomic authorize+reserve via PL/pgSQL (row locks). None = RPC failed."""
         url = f"{self.settings.supabase_url}/rest/v1/rpc/ai_authorize_usage"
@@ -123,6 +124,7 @@ class SupabaseService:
         payload = {
             "p_account_id": account_id,
             "p_five_hour_limit": five_hour_limit,
+            "p_daily_limit": daily_limit,
             "p_weekly_limit": weekly_limit,
             "p_weekly_renewal_count": weekly_renewal_count,
             "p_units": units,
@@ -170,8 +172,8 @@ class SupabaseService:
             return False
 
     async def get_usage_state(
-        self, account_id: str, five_hour_limit: int, weekly_limit: int,
-        weekly_renewal_count: int,
+        self, account_id: str, five_hour_limit: int, daily_limit: int,
+        weekly_limit: int, weekly_renewal_count: int,
     ) -> dict | None:
         """Fetch (and lazily initialize) the account's usage state row."""
         url = f"{self.settings.supabase_url}/rest/v1/rpc/ai_get_usage_state"
@@ -184,6 +186,7 @@ class SupabaseService:
                 response = await client.post(url, json={
                     "p_account_id": account_id,
                     "p_five_hour_limit": five_hour_limit,
+                    "p_daily_limit": daily_limit,
                     "p_weekly_limit": weekly_limit,
                     "p_weekly_renewal_count": weekly_renewal_count,
                 }, headers=headers)

@@ -13,6 +13,10 @@ create table if not exists public.ai_usage_state (
   five_hour_used               bigint not null default 0,
   five_hour_window_started_at  timestamptz,
   five_hour_window_ends_at     timestamptz,
+  daily_limit                  bigint not null default 0,
+  daily_used                   bigint not null default 0,
+  daily_window_started_at      timestamptz,
+  daily_window_ends_at         timestamptz,
   weekly_limit                 bigint not null default 0,
   weekly_used                  bigint not null default 0,
   weekly_cycle_started_at      timestamptz,
@@ -47,6 +51,7 @@ create policy ai_usage_reservations_service_all on public.ai_usage_reservations
 create or replace function public.ai_authorize_usage(
   p_account_id text,
   p_five_hour_limit bigint,
+  p_daily_limit bigint,
   p_weekly_limit bigint,
   p_weekly_renewal_count integer,
   p_units bigint,
@@ -89,6 +94,14 @@ begin
     v_state.five_hour_window_ends_at := v_now + interval '5 hours';
   end if;
 
+  -- Lazy daily reset.
+  if v_state.daily_window_ends_at is not null
+     and v_now >= v_state.daily_window_ends_at then
+    v_state.daily_used := 0;
+    v_state.daily_window_started_at := v_now;
+    v_state.daily_window_ends_at := v_now + interval '24 hours';
+  end if;
+
   -- Lazy weekly reset: restores usage AND renewal eligibility.
   if v_state.weekly_cycle_ends_at is not null
      and v_now >= v_state.weekly_cycle_ends_at then
@@ -100,6 +113,7 @@ begin
 
   -- Keep configured limits current.
   v_state.five_hour_limit := p_five_hour_limit;
+  v_state.daily_limit := p_daily_limit;
   v_state.weekly_limit := p_weekly_limit;
   v_state.weekly_renewal_count := p_weekly_renewal_count;
 
@@ -108,6 +122,13 @@ begin
       'allowed', false,
       'window', 'five_hour',
       'reset_at', v_state.five_hour_window_ends_at);
+  end if;
+
+  if v_state.daily_used + p_units > v_state.daily_limit then
+    return json_build_object(
+      'allowed', false,
+      'window', 'daily',
+      'reset_at', v_state.daily_window_ends_at);
   end if;
 
   if v_state.weekly_used + p_units > v_state.weekly_limit then
@@ -127,6 +148,7 @@ begin
   end if;
 
   v_state.five_hour_used := v_state.five_hour_used + p_units;
+  v_state.daily_used := v_state.daily_used + p_units;
   v_state.weekly_used := v_state.weekly_used + p_units;
 
   update public.ai_usage_state set
@@ -135,6 +157,10 @@ begin
     five_hour_used = v_state.five_hour_used,
     five_hour_window_started_at = v_state.five_hour_window_started_at,
     five_hour_window_ends_at = v_state.five_hour_window_ends_at,
+    daily_limit = v_state.daily_limit,
+    daily_used = v_state.daily_used,
+    daily_window_started_at = v_state.daily_window_started_at,
+    daily_window_ends_at = v_state.daily_window_ends_at,
     weekly_limit = v_state.weekly_limit,
     weekly_used = v_state.weekly_used,
     weekly_cycle_started_at = v_state.weekly_cycle_started_at,
@@ -223,6 +249,7 @@ grant execute on function public.ai_release_usage(text) to service_role;
 create or replace function public.ai_get_usage_state(
   p_account_id text,
   p_five_hour_limit bigint,
+  p_daily_limit bigint,
   p_weekly_limit bigint,
   p_weekly_renewal_count integer
 )
@@ -250,6 +277,9 @@ begin
     'five_hour_used', v_state.five_hour_used,
     'five_hour_window_started_at', v_state.five_hour_window_started_at,
     'five_hour_window_ends_at', v_state.five_hour_window_ends_at,
+    'daily_used', v_state.daily_used,
+    'daily_window_started_at', v_state.daily_window_started_at,
+    'daily_window_ends_at', v_state.daily_window_ends_at,
     'weekly_used', v_state.weekly_used,
     'weekly_cycle_started_at', v_state.weekly_cycle_started_at,
     'weekly_cycle_ends_at', v_state.weekly_cycle_ends_at,
