@@ -102,3 +102,25 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
 def get_plan_policy(plan_id: str) -> PlanPolicy:
     return PLAN_POLICIES.get(plan_id) or PLAN_POLICIES["starter"]
 
+
+# Upgrade ordering (low -> high). Team plans sit above premium.
+PLAN_RANK: dict[str, int] = {
+    "starter": 0,
+    "plus": 1,
+    "pro": 2,
+    "premium": 3,
+    "business-standard": 4,
+    "business-plus": 5,
+    "enterprise": 6,
+}
+
+
+def minimum_plan_for_model(model_id: str) -> str | None:
+    """Cheapest plan that includes the model, or None if no plan gates it."""
+    candidates = [
+        (PLAN_RANK.get(pid, 99), pid)
+        for pid, policy in PLAN_POLICIES.items()
+        if model_id in policy.allowed_models
+    ]
+    return min(candidates)[1] if candidates else None
+

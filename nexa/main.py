@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from nexa.api import agent, chat, health, models
+from nexa.api import usage as usage_api
 from nexa.appstate import NexaState
 from nexa.auth import Authenticator
 from nexa.config import Settings, get_settings
@@ -125,6 +126,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(models.router, prefix="/v1")
     app.include_router(chat.router, prefix="/v1")
     app.include_router(agent.router, prefix="/v1")
+    app.include_router(usage_api.router, prefix="/v1")
 
     @app.get("/")
     async def root() -> dict:

@@ -175,9 +175,14 @@ class SupabaseService:
 
     async def monthly_tokens_used(self, account_id: str) -> int:
         """Sum of total tokens this calendar month from ai_requests (best effort)."""
+        data = await self.monthly_usage(account_id)
+        return int(data.get("total_tokens", 0))
+
+    async def monthly_usage(self, account_id: str) -> dict[str, int]:
+        """Requests + token totals for this calendar month (best effort)."""
         if not self.settings.usage_persistence_configured:
-            return 0
-        url = f"{self.settings.supabase_url}/rest/v1/rpc/ai_monthly_tokens"
+            return {}
+        url = f"{self.settings.supabase_url}/rest/v1/rpc/ai_monthly_usage"
         headers = {
             "apikey": self.settings.supabase_service_role_key,
             "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
@@ -187,9 +192,8 @@ class SupabaseService:
                 response = await client.post(
                     url, json={"p_account_id": account_id}, headers=headers
                 )
-            if response.status_code == 200:
-                value = response.json()
-                return int(value) if value is not None else 0
+            if response.status_code == 200 and isinstance(response.json(), dict):
+                return response.json()
         except Exception as exc:  # noqa: BLE001
-            logger.debug("monthly tokens lookup skipped: %s", type(exc).__name__)
-        return 0
+            logger.debug("monthly usage lookup skipped: %s", type(exc).__name__)
+        return {}
