@@ -129,4 +129,4 @@ NEXA_API_KEY=<gateway credential>
 ```
 
 The client `.env` must not contain provider keys. For local development:
-`NEXA_API_URL=http://127.0.0.1:8000/v1`.
+`NEXA_API_URL=http://127.0.0.1:8000/v1`. local develeopment 
