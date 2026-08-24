@@ -114,11 +114,13 @@ class NVIDIAProvider(AIProvider):
 
         data = response.json()
         choices = data.get("choices") or [{}]
+        message = choices[0].get("message") or {}
         usage_raw = data.get("usage") or {}
         return ChatResponse(
-            content=choices[0].get("message", {}).get("content", ""),
+            content=message.get("content"),
             model=data.get("model", request.model),
             finish_reason=choices[0].get("finish_reason"),
+            tool_calls=message.get("tool_calls"),
             usage=Usage(
                 input_tokens=int(usage_raw.get("prompt_tokens", 0)),
                 output_tokens=int(usage_raw.get("completion_tokens", 0)),

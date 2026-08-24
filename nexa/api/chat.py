@@ -191,8 +191,11 @@ async def chat_completions(
                 background=_ReleaseSlotBackground(state, identity.account_id),
             )
         response = await provider.chat(chat_request)
-        usage = response.usage or await _estimate_usage(body.messages, response.content)
+        usage = response.usage or await _estimate_usage(body.messages, response.content or "")
         await state.usage.record(ctx, usage=usage, status="success")
+        message: dict[str, Any] = {"role": "assistant", "content": response.content}
+        if response.tool_calls:
+            message["tool_calls"] = response.tool_calls
         return JSONResponse(
             {
                 "id": ctx.request_id,
@@ -202,7 +205,7 @@ async def chat_completions(
                 "choices": [
                     {
                         "index": 0,
-                        "message": {"role": "assistant", "content": response.content},
+                        "message": message,
                         "finish_reason": response.finish_reason or "stop",
                     }
                 ],

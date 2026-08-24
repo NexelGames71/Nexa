@@ -30,10 +30,11 @@ class Usage:
 
 @dataclass
 class ChatResponse:
-    content: str
+    content: str | None
     model: str
     finish_reason: str | None = None
     usage: Usage | None = None
+    tool_calls: list[dict[str, Any]] | None = None
 
 
 @dataclass
