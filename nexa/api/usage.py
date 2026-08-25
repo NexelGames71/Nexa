@@ -75,8 +75,9 @@ async def get_usage(
             "total_tokens": total_used,
         },
         "remaining_tokens": max(0, monthly_limit - total_used),
-        # 5-hour + weekly windows (server-authoritative; spec §14/§21).
+        # 5-hour + daily + weekly windows (server-authoritative; spec §14/§21).
         "five_hour": windows["five_hour"],
+        "daily": windows["daily"],
         "weekly": windows["weekly"],
         "models": models,
         "upgrade_url": "https://nexcoder.trynexa-ai.com/pricing",
