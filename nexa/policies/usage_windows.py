@@ -110,8 +110,8 @@ class UsageService:
         """Server-authoritative window state for GET /v1/usage."""
         if self.supabase.settings.usage_persistence_configured:
             state = await self.supabase.get_usage_state(
-                account_id, policy.five_hour_limit, policy.weekly_limit,
-                policy.weekly_renewal_count)
+                account_id, policy.five_hour_limit, policy.daily_limit,
+                policy.weekly_limit, policy.weekly_renewal_count)
         else:
             async with self._account_lock(account_id):
                 state = self._memory_state(
