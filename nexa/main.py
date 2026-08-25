@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from nexa.api import agent, chat, health, models
+from nexa.api import admin, agent, chat, health, models
 from nexa.api import usage as usage_api
 from nexa.appstate import NexaState
 from nexa.auth import Authenticator
@@ -24,7 +24,9 @@ from nexa.policies.concurrency import ConcurrencyManager
 from nexa.policies.service import PolicyService
 from nexa.policies.usage_windows import UsageService
 from nexa.providers.nvidia import NVIDIAProvider
+from nexa.providers.openrouter import OpenRouterProvider
 from nexa.routing.catalog import catalog_payload  # noqa: F401
+from nexa.services.catalog_service import CatalogService
 from nexa.services.supabase import SupabaseService
 from nexa.services.usage import UsageTracker
 
@@ -43,8 +45,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     policies = PolicyService(settings, supabase)
     concurrency = ConcurrencyManager()
     nvidia = NVIDIAProvider(settings)
+    openrouter = OpenRouterProvider(settings)
     usage = UsageTracker(supabase)
     usage_windows = UsageService(supabase)
+    catalog = CatalogService(supabase)
 
     state = NexaState(
         settings=settings,
@@ -53,7 +57,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         usage=usage,
         supabase=supabase,
         concurrency=concurrency,
-        providers={nvidia.name: nvidia},
+        providers={nvidia.name: nvidia, openrouter.name: openrouter},
+        catalog=catalog,
         usage_windows=usage_windows,
     )
 
@@ -132,6 +137,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(chat.router, prefix="/v1")
     app.include_router(agent.router, prefix="/v1")
     app.include_router(usage_api.router, prefix="/v1")
+    app.include_router(admin.router, prefix="/v1")
 
     @app.get("/")
     async def root() -> dict:

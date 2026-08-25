@@ -15,7 +15,7 @@ class TestModelsAvailability:
         assert response.status_code == 200
         models = {m["id"]: m for m in response.json()["models"]}
         # All four catalog models are listed...
-        assert len(models) == 4
+        assert len(models) == 5
         # ...flash models available, nemotron gated with required_plan.
         assert models["stepfun-ai/step-3.7-flash"]["available"] is True
         assert models["deepseek-ai/deepseek-v4-flash-0731"]["available"] is True
@@ -48,7 +48,7 @@ class TestUsageEndpoint:
         assert limits["monthly_token_limit"] == 200_000_000
         assert body["usage"]["requests"] == 0
         assert body["remaining_tokens"] == 200_000_000
-        assert len(body["models"]) == 4
+        assert len(body["models"]) == 5
         assert body["upgrade_url"].startswith("https://")
 
     async def test_usage_reflects_recorded_requests(self, client, supabase):

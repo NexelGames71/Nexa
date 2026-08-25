@@ -45,6 +45,14 @@ class Settings:
         default_factory=lambda: os.getenv("NVIDIA_DEFAULT_MODEL", "")
     )
 
+    openrouter_api_key: str = field(default_factory=lambda: os.getenv("OPENROUTER_API_KEY", ""))
+    openrouter_app_url: str = field(
+        default_factory=lambda: os.getenv("OPENROUTER_APP_URL", "https://nexcoder.trynexa-ai.com")
+    )
+    openrouter_app_name: str = field(
+        default_factory=lambda: os.getenv("OPENROUTER_APP_NAME", "NexCoder")
+    )
+
     model_routes: dict[str, str] = field(
         default_factory=lambda: _parse_routes(os.getenv("NEXA_MODEL_ROUTES", ""))
     )
@@ -61,6 +69,8 @@ class Settings:
     )
 
     redis_url: str = field(default_factory=lambda: os.getenv("REDIS_URL", ""))
+
+    admin_token: str = field(default_factory=lambda: os.getenv("NEXA_ADMIN_TOKEN", ""))
 
     @property
     def is_production(self) -> bool:

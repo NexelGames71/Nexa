@@ -125,6 +125,7 @@ def state(supabase: FakeSupabase, nvidia: FakeNVIDIAProvider) -> NexaState:
     policies = PolicyService(settings, supabase)
     usage = UsageTracker(supabase)
     from nexa.policies.usage_windows import UsageService
+    from nexa.services.catalog_service import CatalogService
 
     return NexaState(
         settings=settings,
@@ -134,6 +135,7 @@ def state(supabase: FakeSupabase, nvidia: FakeNVIDIAProvider) -> NexaState:
         supabase=supabase,
         concurrency=ConcurrencyManager(),
         providers={nvidia.name: nvidia},
+        catalog=CatalogService(supabase),
         usage_windows=UsageService(supabase),
     )
 

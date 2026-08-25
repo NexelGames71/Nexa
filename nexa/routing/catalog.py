@@ -45,7 +45,18 @@ CATALOG: list[CatalogModel] = [
         capabilities=["chat", "code", "streaming"],
         description="Efficient coding-focused model",
     ),
+    CatalogModel(
+        id="stealth/ox-alpha",
+        display_name="Ox Alpha",
+        capabilities=["chat", "code", "streaming", "reasoning"],
+        description="Anonymous third-party model. Provider retains request data.",
+    ),
 ]
+
+# Models served by providers other than the default NVIDIA route.
+PROVIDER_ROUTES: dict[str, str] = {
+    "stealth/ox-alpha": "openrouter",
+}
 
 _CATALOG_IDS = frozenset(m.id for m in CATALOG)
 

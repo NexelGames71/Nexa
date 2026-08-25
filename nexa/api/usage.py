@@ -14,8 +14,8 @@ from nexa.api.deps import current_identity, get_nexa_state
 from nexa.appstate import NexaState
 from nexa.auth import AuthIdentity, apply_identity
 from nexa.context import RequestContext
-from nexa.policies.plans import PLAN_RANK, minimum_plan_for_model
-from nexa.routing.catalog import CATALOG
+from nexa.policies.plans import PLAN_RANK
+from nexa.services.catalog_service import CatalogService
 
 router = APIRouter()
 
@@ -38,15 +38,23 @@ async def get_usage(
     total_used = int(usage.get("total_tokens", 0))
     windows = await state.usage_windows.snapshot(identity.account_id, policy)
 
+    catalog_rows = await state.catalog.get_models()
     models = []
-    for m in CATALOG:
-        available = m.id in policy.allowed_models
+    for row in catalog_rows:
+        m = CatalogService.normalize(row)
+        required = m.get("requires_plan")
+        if required:
+            available = PLAN_RANK.get(identity.plan, 0) >= PLAN_RANK.get(required, 0)
+        else:
+            available = m["id"] in policy.allowed_models
         models.append(
             {
-                "id": m.id,
-                "display_name": m.display_name,
+                "id": m["id"],
+                "display_name": m["display_name"],
                 "available": available,
-                "required_plan": None if available else minimum_plan_for_model(m.id),
+                "required_plan": None if available else required,
+                "context_window": m.get("context_window"),
+                "max_output_tokens": m.get("max_output_tokens"),
             }
         )
 

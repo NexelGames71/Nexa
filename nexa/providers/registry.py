@@ -38,11 +38,14 @@ def build_default_registry(settings: Settings, nvidia_provider: AIProvider) -> P
 def resolve_route(settings: Settings, model_id: str) -> tuple[str, str]:
     """Map a catalog model id to (provider_name, provider_model).
 
-    By default the id passes through unchanged to NVIDIA. An explicit
-    override may be set via NEXA_MODEL_ROUTES as `model-id=provider-model`
-    pairs (useful for canary swaps without a redeploy of clients).
+    Default route: NVIDIA NIM passthrough. Catalog entries in
+    PROVIDER_ROUTES (e.g. stealth/ox-alpha -> openrouter) go to their
+    registered provider. NEXA_MODEL_ROUTES overrides any mapping.
     Raises MODEL_UNAVAILABLE for unknown ids so clients get a stable error.
     """
     if not known_model(model_id):
         raise NexaError(MODEL_UNAVAILABLE, "Invalid model identifier")
-    return "nvidia", settings.resolve_provider_model(model_id)
+    from nexa.routing.catalog import PROVIDER_ROUTES
+
+    provider_name = PROVIDER_ROUTES.get(model_id, "nvidia")
+    return provider_name, settings.resolve_provider_model(model_id)

@@ -240,7 +240,7 @@ class SupabaseService:
             return None
 
     async def get_model_catalog_rows(self) -> list[dict[str, Any]]:
-        """Optional dynamic catalog overrides from ai_model_catalog."""
+        """All admin-managed catalog rows (enabled and disabled)."""
         if not self.settings.usage_persistence_configured:
             return []
         url = f"{self.settings.supabase_url}/rest/v1/ai_model_catalog"
@@ -252,7 +252,7 @@ class SupabaseService:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(
                     url,
-                    params={"enabled": "eq.true", "select": "*"},
+                    params={"select": "*", "order": "sort_order.asc"},
                     headers=headers,
                 )
             if response.status_code == 200 and isinstance(response.json(), list):
@@ -260,6 +260,36 @@ class SupabaseService:
         except Exception as exc:  # noqa: BLE001
             logger.debug("model catalog lookup skipped: %s", type(exc).__name__)
         return []
+
+    async def upsert_model_catalog_row(self, row: dict[str, Any]) -> bool:
+        url = f"{self.settings.supabase_url}/rest/v1/ai_model_catalog"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(url, json=row, headers=headers)
+            return response.status_code in (200, 201, 204)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("catalog upsert failed: %s", type(exc).__name__)
+            return False
+
+    async def delete_model_catalog_row(self, model_id: str) -> bool:
+        url = f"{self.settings.supabase_url}/rest/v1/ai_model_catalog"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.delete(
+                    url, params={"logical_id": f"eq.{model_id}"}, headers=headers)
+            return response.status_code in (200, 204)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("catalog delete failed: %s", type(exc).__name__)
+            return False
 
     async def monthly_tokens_used(self, account_id: str) -> int:
         """Sum of total tokens this calendar month from ai_requests (best effort)."""

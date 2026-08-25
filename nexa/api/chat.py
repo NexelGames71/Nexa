@@ -31,7 +31,6 @@ from nexa.errors import (
 from nexa.policies.plans import PlanPolicy
 from nexa.policies.plans import PlanPolicy as _PlanPolicy  # noqa: F401
 from nexa.providers.base import ChatRequest, Usage
-from nexa.providers.registry import resolve_route
 from nexa.routing.catalog import known_model
 
 router = APIRouter()
@@ -165,7 +164,14 @@ async def chat_completions(
     state.policies.check_model_allowed(identity, body.model)
     state.policies.validate_context_size(identity, body.messages)
 
-    provider_name, provider_model = resolve_route(state.settings, body.model)
+    catalog_entry = await state.catalog.get(body.model)
+    if catalog_entry is None or not catalog_entry.get("enabled", True):
+        from nexa.errors import MODEL_UNAVAILABLE
+        raise NexaError(MODEL_UNAVAILABLE, "Invalid model identifier")
+    provider_name = catalog_entry.get("provider") or "nvidia"
+    provider_model = catalog_entry.get("provider_model") or body.model
+    if provider_name not in state.providers:
+        provider_name = "nvidia"
     provider = state.providers[provider_name]
 
     # Usage windows: reserve estimated input tokens before the provider call.
