@@ -239,6 +239,188 @@ class SupabaseService:
             logger.warning("limit override lookup failed: %s", type(exc).__name__)
             return None
 
+    # -- gateway API keys (dashboard-managed) ---------------------------------
+
+    @staticmethod
+    def hash_key(token: str) -> str:
+        import hashlib
+        return hashlib.sha256(token.encode()).hexdigest()
+
+    async def find_gateway_key(self, token: str) -> dict | None:
+        """Look up a dashboard-created gateway key by hash. Fire-and-forget
+        last_used update. Returns {account_id, plan} or None."""
+        if not self.settings.usage_persistence_configured:
+            return None
+        url = f"{self.settings.supabase_url}/rest/v1/ai_gateway_keys"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    url,
+                    params={
+                        "key_hash": f"eq.{self.hash_key(token)}",
+                        "enabled": "eq.true",
+                        "select": "account_id,plan",
+                    },
+                    headers=headers,
+                )
+            if response.status_code == 200:
+                rows = response.json()
+                if rows:
+                    return rows[0]
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("gateway key lookup failed: %s", type(exc).__name__)
+        return None
+
+    async def list_gateway_keys(self) -> list[dict]:
+        url = f"{self.settings.supabase_url}/rest/v1/ai_gateway_keys"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    url,
+                    params={"select": "id,name,key_prefix,account_id,plan,enabled,created_at,last_used_at",
+                            "order": "created_at.desc"},
+                    headers=headers,
+                )
+            if response.status_code == 200:
+                return response.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("list gateway keys failed: %s", type(exc).__name__)
+        return []
+
+    async def create_gateway_key(self, *, name: str, key_hash: str,
+                                 key_prefix: str, account_id: str,
+                                 plan: str, created_by: str) -> bool:
+        url = f"{self.settings.supabase_url}/rest/v1/ai_gateway_keys"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+            "Prefer": "return=minimal",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(url, json={
+                    "name": name, "key_hash": key_hash, "key_prefix": key_prefix,
+                    "account_id": account_id, "plan": plan, "created_by": created_by,
+                }, headers=headers)
+            return response.status_code in (200, 201)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("create gateway key failed: %s", type(exc).__name__)
+            return False
+
+    async def set_gateway_key_enabled(self, key_id: str, enabled: bool) -> bool:
+        url = f"{self.settings.supabase_url}/rest/v1/ai_gateway_keys"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.patch(
+                    url, params={"id": f"eq.{key_id}"},
+                    json={"enabled": enabled}, headers=headers)
+            return response.status_code in (200, 204)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("gateway key update failed: %s", type(exc).__name__)
+            return False
+
+    # -- service config (system prompts, routing, agent) -----------------------
+
+    async def get_config(self, key: str) -> dict | None:
+        url = f"{self.settings.supabase_url}/rest/v1/ai_service_config"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    url, params={"key": f"eq.{key}", "select": "key,value,updated_by,updated_at"},
+                    headers=headers)
+            if response.status_code == 200:
+                rows = response.json()
+                return rows[0] if rows else None
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("config get failed: %s", type(exc).__name__)
+        return None
+
+    async def put_config(self, key: str, value: dict, updated_by: str) -> bool:
+        url = f"{self.settings.supabase_url}/rest/v1/ai_service_config"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(url, json={
+                    "key": key, "value": value, "updated_by": updated_by,
+                }, headers=headers)
+            return response.status_code in (200, 201)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("config put failed: %s", type(exc).__name__)
+            return False
+
+    # -- accounts: profiles / organizations ------------------------------------
+
+    async def list_profiles(self, limit: int = 100) -> list[dict]:
+        url = f"{self.settings.supabase_url}/rest/v1/profiles"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    url,
+                    params={"select": "id,email,plan,created_at", "limit": str(limit),
+                            "order": "created_at.desc"},
+                    headers=headers,
+                )
+            if response.status_code == 200:
+                return response.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("profiles list failed: %s", type(exc).__name__)
+        return []
+
+    async def get_account_limit_rows(self) -> list[dict]:
+        url = f"{self.settings.supabase_url}/rest/v1/ai_account_limits"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    url, params={"select": "*"}, headers=headers)
+            if response.status_code == 200:
+                return response.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("account limits list failed: %s", type(exc).__name__)
+        return []
+
+    async def upsert_account_limit_row(self, row: dict) -> bool:
+        url = f"{self.settings.supabase_url}/rest/v1/ai_account_limits"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(url, json=row, headers=headers)
+            return response.status_code in (200, 201)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("account limit upsert failed: %s", type(exc).__name__)
+            return False
+
     async def get_model_catalog_rows(self) -> list[dict[str, Any]]:
         """All admin-managed catalog rows (enabled and disabled)."""
         if not self.settings.usage_persistence_configured:

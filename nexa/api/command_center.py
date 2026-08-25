@@ -173,7 +173,7 @@ function buildNav(){
     }
   }
 }
-const BUILT = new Set(['dashboard','models','providers','usagelimits','status','analytics']);
+const BUILT = new Set(['dashboard','models','providers','usagelimits','status','analytics','activity','apikeys','ratelimits','quotas','subscriptions','teams','prompts','routing','agentcfg','settings']);
 const LABELS = Object.fromEntries(NAV.flatMap(([,items])=>items));
 
 function render(){
@@ -187,6 +187,16 @@ function render(){
   else if (page==='usagelimits') renderUsage();
   else if (page==='status') renderStatus();
   else if (page==='analytics') renderAnalytics();
+  else if (page==='activity') renderLogs();
+  else if (page==='apikeys') renderKeys();
+  else if (page==='ratelimits') renderLimits();
+  else if (page==='quotas') renderLimits();
+  else if (page==='subscriptions') renderSubscriptions();
+  else if (page==='teams') renderTeams();
+  else if (page==='prompts') renderConfig('system_prompt', 'System Prompts');
+  else if (page==='routing') renderConfig('routing_rules', 'Routing Rules');
+  else if (page==='agentcfg') renderConfig('agent_config', 'Agent Configuration');
+  else if (page==='settings') renderSettings();
   else roadmap(t[0]);
 }
 function roadmap(title){
@@ -367,6 +377,180 @@ function barChart(top){
   const max = Math.max(...top.map(t=>t.requests), 1);
   return `<div style="display:flex;align-items:flex-end;gap:18px;height:180px;padding-top:10px">` +
     top.map(t=>`<div style="flex:1;text-align:center"><div style="height:${(t.requests/max)*140}px;background:linear-gradient(180deg,var(--blue),var(--violet));border-radius:6px 6px 0 0"></div><div class="mono" style="font-size:10px;margin-top:6px;color:var(--txt2)">${t.model.split('/')[0]}</div></div>`).join('') + '</div>';
+}
+
+/* ================= activity logs ================= */
+async function renderLogs(){
+  $('#page').innerHTML = `<div class="filters">
+    <input id="log-model" placeholder="Filter by model..." style="width:220px">
+    <select id="log-status"><option value="">All statuses</option><option>success</option><option>error</option><option>cancelled</option></select>
+    <button class="btn ghost" onclick="loadLogs()">Apply</button></div>
+  <div class="card" style="padding:6px 12px" id="log-table"><div class="skel" style="margin:10px 0"></div></div>`;
+  await loadLogs();
+}
+async function loadLogs(){
+  const model = document.getElementById('log-model')?.value || '';
+  const status = document.getElementById('log-status')?.value || '';
+  let logs;
+  try { logs = (await api(`/admin/logs?model=${encodeURIComponent(model)}&status=${encodeURIComponent(status)}&limit=200`)).logs; }
+  catch(e){ $('#log-table').innerHTML = errState('Unable to load logs', e.message); return; }
+  $('#log-table').innerHTML = `<table><thead><tr><th>Time</th><th>Request</th><th>Account</th><th>Model</th><th>Status</th><th>Tokens</th><th>Latency</th></tr></thead><tbody>
+  ${logs.map(l=>`<tr><td style="color:var(--txt2)" class="mono">${(l.started_at||'').replace('T',' ').slice(5,19)}</td>
+    <td class="mono">${esc(l.request_id||'')}</td><td class="mono">${esc(l.account_id||'')}</td>
+    <td class="mono">${esc(l.model||'')}</td>
+    <td><span class="badge ${l.status==='success'?'g':l.status==='error'?'r':'a'}">${l.status}</span>${l.error_code?` <span class="badge a">${esc(l.error_code)}</span>`:''}</td>
+    <td>${fmtN(l.total_tokens||0)}</td><td>${l.latency_ms??'-'}ms</td></tr>`).join('') || '<tr><td colspan=7 style="color:var(--txt2)">No matching requests.</td></tr>'}
+  </tbody></table>`;
+}
+
+/* ================= api keys ================= */
+async function renderKeys(){
+  $('#page').innerHTML = '<div class="card"><div class="skel" style="margin:10px 0"></div></div>';
+  let data;
+  try { data = await api('/admin/keys'); } catch(e){ $('#page').innerHTML = errState('Unable to load API keys', e.message); return; }
+  $('#head-actions').innerHTML = `<button class="btn" onclick="showKeyForm()">+ Create API Key</button>`;
+  $('#page').innerHTML = `
+  <div class="card"><div class="panel-title">Dashboard-managed keys</div>
+  <div class="panel-sub">Hashed at rest — the full token is shown once at creation. Env keys: ${data.env_keys}</div>
+  <table><thead><tr><th>Name</th><th>Prefix</th><th>Account</th><th>Plan</th><th>Status</th><th>Last Used</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+  ${data.keys.map(k=>`<tr><td>${esc(k.name)}</td><td class="mono">${esc(k.key_prefix)}•••</td><td class="mono">${esc(k.account_id)}</td>
+    <td><span class="badge v">${esc(k.plan)}</span></td>
+    <td><span class="badge ${k.enabled?'g':'r'}">${k.enabled?'Active':'Revoked'}</span></td>
+    <td style="color:var(--txt2)">${k.last_used_at?(k.last_used_at+'').replace('T',' ').slice(0,16):'never'}</td>
+    <td style="text-align:right">${k.enabled?`<button class="btn danger sm" onclick="revokeKey('${k.id}')">Revoke</button>`:''}</td></tr>`).join('')
+    || '<tr><td colspan=7 style="color:var(--txt2)">No dashboard keys yet.</td></tr>'}
+  </tbody></table></div>
+  <div id="key-form"></div>`;
+}
+function showKeyForm(){
+  document.getElementById('key-form').innerHTML = `<div class="card" style="margin-top:14px">
+  <div class="panel-title">Create API Key</div>
+  <div class="row" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
+    <input id="k-name" placeholder="Key name (e.g. Desktop build)" style="width:220px">
+    <input id="k-acct" placeholder="Account id" style="width:200px">
+    <select id="k-plan"><option>starter</option><option>plus</option><option selected>pro</option><option>premium</option><option>business-standard</option><option>enterprise</option></select>
+    <button class="btn" onclick="createKey()">Create</button></div>
+  <div id="k-out" style="margin-top:12px"></div></div>`;
+}
+async function createKey(){
+  try {
+    const r = await api('/admin/keys', {method:'POST', body: JSON.stringify({
+      name: document.getElementById('k-name').value,
+      account_id: document.getElementById('k-acct').value,
+      plan: document.getElementById('k-plan').value})});
+    document.getElementById('k-out').innerHTML = `<div class="card" style="border-color:var(--green)">
+      <b style="color:var(--green)">Key created — copy it now:</b>
+      <div class="mono" style="margin-top:6px;font-size:13px;word-break:break-all">${esc(r.token)}</div></div>`;
+    setTimeout(renderKeys, 8000);
+  } catch(e){ toast('Create failed: '+e.message,'r'); }
+}
+async function revokeKey(id){
+  if (!confirm('Revoke this key? Clients using it immediately lose access.')) return;
+  try { await api('/admin/keys/'+id, {method:'DELETE'}); toast('Key revoked'); renderKeys(); }
+  catch(e){ toast('Revoke failed: '+e.message,'r'); }
+}
+
+/* ================= rate limits / quotas ================= */
+async function renderLimits(){
+  let data;
+  try { data = await api('/admin/limits'); } catch(e){ $('#page').innerHTML = errState('Unable to load limits', e.message); return; }
+  const ov = {};
+  data.overrides.forEach(o=>ov[o.account_id]=o);
+  $('#page').innerHTML = `
+  <div class="card"><div class="panel-title">Per-Account Overrides</div>
+  <div class="panel-sub">Applied on top of plan policies. Empty fields inherit the plan default. Saved to <span class="mono">ai_account_limits</span> instantly.</div>
+  <table><thead><tr><th>Account</th><th>Plan override</th><th>RPM</th><th>RPH</th><th>Concurrent</th><th>Monthly tokens</th><th></th></tr></thead><tbody>
+  ${(data.accounts||[]).map(a=>{
+    const o = ov[a.id]||{};
+    return `<tr><td class="mono">${esc(a.id.slice(0,8))}…<br><span style="opacity:.6">${esc(a.email||'')}</span></td>
+    <td><input class="lim" data-a="${a.id}" data-f="plan_override" value="${esc(o.plan_override||'')}" placeholder="—" style="width:120px"></td>
+    <td><input class="lim" data-a="${a.id}" data-f="requests_per_minute" type="number" value="${o.requests_per_minute??''}" placeholder="—" style="width:70px"></td>
+    <td><input class="lim" data-a="${a.id}" data-f="requests_per_hour" type="number" value="${o.requests_per_hour??''}" placeholder="—" style="width:70px"></td>
+    <td><input class="lim" data-a="${a.id}" data-f="concurrent_generations" type="number" value="${o.concurrent_generations??''}" placeholder="—" style="width:70px"></td>
+    <td><input class="lim" data-a="${a.id}" data-f="monthly_token_limit" type="number" value="${o.monthly_token_limit??''}" placeholder="—" style="width:110px"></td>
+    <td><button class="btn sm" onclick="saveLimit('${a.id}')">Save</button></td></tr>`;
+  }).join('') || '<tr><td colspan=7 style="color:var(--txt2)">No accounts yet.</td></tr>'}
+  </tbody></table></div>`;
+}
+async function saveLimit(accountId){
+  const body = {};
+  document.querySelectorAll(`.lim[data-a="${accountId}"]`).forEach(i=>{
+    if (i.value !== '') body[i.dataset.f] = i.type==='number' ? +i.value : i.value;
+  });
+  try { await api('/admin/limits/'+encodeURIComponent(accountId), {method:'PUT', body: JSON.stringify(body)}); toast('Limits saved'); }
+  catch(e){ toast('Save failed: '+e.message,'r'); }
+}
+
+/* ================= subscriptions & teams ================= */
+async function renderSubscriptions(){
+  let data;
+  try { data = await api('/admin/subscriptions'); } catch(e){ $('#page').innerHTML = errState('Unable to load subscriptions', e.message); return; }
+  $('#page').innerHTML = `
+  <div class="card"><div class="panel-title">Accounts</div><div class="panel-sub">Profiles and their active plans (Polar-managed)</div>
+  <table><thead><tr><th>Email</th><th>Plan</th><th>Since</th></tr></thead><tbody>
+  ${(data.profiles||[]).map(p=>`<tr><td>${esc(p.email||p.id)}</td><td><span class="badge v">${esc(p.plan||'starter')}</span></td>
+  <td style="color:var(--txt2)">${(p.created_at||'').slice(0,10)}</td></tr>`).join('') || '<tr><td colspan=3 style="color:var(--txt2)">No accounts.</td></tr>'}
+  </tbody></table></div>
+  <div class="card" style="margin-top:14px"><div class="panel-title">Subscriptions</div>
+  <table><thead><tr><th>Plan</th><th>Status</th><th>Seats</th><th>Renews</th></tr></thead><tbody>
+  ${(data.subscriptions||[]).map(s=>`<tr><td class="mono">${esc(s.plan_id)}</td>
+  <td><span class="badge ${s.status==='active'?'g':'a'}">${s.status}</span></td><td>${s.seats}</td>
+  <td style="color:var(--txt2)">${(s.current_period_end||'').slice(0,10)||'—'}</td></tr>`).join('') || '<tr><td colspan=4 style="color:var(--txt2)">No subscriptions.</td></tr>'}
+  </tbody></table></div>`;
+}
+async function renderTeams(){
+  let data;
+  try { data = await api('/admin/teams'); } catch(e){ $('#page').innerHTML = errState('Unable to load teams', e.message); return; }
+  $('#page').innerHTML = `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">
+  ${(data.teams||[]).map(t=>`<div class="card"><b style="text-transform:capitalize">${esc(t.name)}</b>
+    <span class="badge gr" style="margin-left:8px">${t.slug||''}</span>
+    <p style="color:var(--txt2);font-size:12px;margin:8px 0">${t.members.length} member(s)</p>
+    ${(t.members||[]).map(m=>`<div style="font-size:12px">• <span class="mono">${esc(m.user_id.slice(0,8))}…</span> — ${esc(m.role)}</div>`).join('')}
+  </div>`).join('') || `<div class="card empty" style="grid-column:1/-1"><h3>No teams yet</h3><p>Teams appear here once organizations are created through checkout.</p></div>`}
+  </div>`;
+}
+
+/* ================= config editors ================= */
+async function renderConfig(key, title){
+  $('#content .page-title') && ($('#content .page-title').textContent = title);
+  let data;
+  try { data = await api('/admin/config/'+key); } catch(e){ $('#page').innerHTML = errState('Unable to load '+title, e.message); return; }
+  const value = JSON.stringify(data.value ?? {}, null, 2);
+  $('#page').innerHTML = `
+  <div class="card"><div class="panel-title">${esc(title)}</div>
+  <div class="panel-sub">Published to clients via <span class="mono">GET /v1/config/${esc(key)}</span> — Nexcoder picks it up on its next config refresh.</div>
+  <textarea id="cfg-json" spellcheck="false" style="width:100%;min-height:340px;background:#0f1524;color:#d8e0f0;border:1px solid var(--line2);border-radius:8px;padding:14px;font-family:var(--mono);font-size:12.5px">${esc(value)}</textarea>
+  <div style="display:flex;gap:10px;margin-top:12px;align-items:center">
+    <button class="btn" onclick="saveConfig('${esc(key)}')">Publish Configuration</button>
+    <span id="cfg-msg" style="font-size:12px;color:var(--txt2)">Last updated: ${esc((data.updated_at||'').replace('T',' ').slice(0,19))} by ${esc(data.updated_by||'—')}</span>
+  </div></div>`;
+}
+async function saveConfig(key){
+  let value;
+  try { value = JSON.parse(document.getElementById('cfg-json').value); }
+  catch(e){ toast('Invalid JSON: '+e.message, 'r'); return; }
+  try { await api('/admin/config/'+key, {method:'PUT', body: JSON.stringify({value})}); toast('Configuration published'); }
+  catch(e){ toast('Publish failed: '+e.message, 'r'); }
+}
+
+/* ================= settings ================= */
+async function renderSettings(){
+  let provs;
+  try { provs = (await api('/admin/providers')).providers; } catch(e){ $('#page').innerHTML = errState('Unable to load settings', e.message); return; }
+  $('#page').innerHTML = `
+  <div class="card"><div class="panel-title">Providers</div><div class="panel-sub">Configured via environment on the Nexa service</div>
+  <table><thead><tr><th>Provider</th><th>Credential</th></tr></thead><tbody>
+  ${Object.entries(provs).map(([n,p])=>`<tr><td style="text-transform:capitalize">${n}</td>
+  <td><span class="badge ${p.configured?'g':'a'}">${p.configured?'•••••••• configured':'not configured'}</span></td></tr>`).join('')}
+  </tbody></table></div>
+  <div class="card" style="margin-top:14px"><div class="panel-title">Service</div>
+  <table><thead><tr><th>Setting</th><th>Value</th></tr></thead><tbody>
+  <tr><td>Environment</td><td>${esc(document.getElementById('env').value)}</td></tr>
+  <tr><td>Catalog cache TTL</td><td class="mono">30s</td></tr>
+  <tr><td>Usage windows</td><td class="mono">5h · 24h · 7d</td></tr>
+  <tr><td>Admin API</td><td class="mono">/v1/admin/* (token-gated)</td></tr>
+  </tbody></table>
+  <p style="font-size:11px;color:var(--txt3);margin-top:10px">Secrets are environment-only and never displayed.</p></div>`;
 }
 
 /* ================= palette & overlay ================= */

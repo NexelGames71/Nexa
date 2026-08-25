@@ -93,3 +93,209 @@ async def provider_status(request: Request):
 async def admin_page():
     """Nexa Command Center — admin dashboard SPA."""
     return HTMLResponse(_CC_PAGE)
+
+# ============================================================================
+# Activity logs (real gateway request history)
+# ============================================================================
+@router.get("/admin/logs")
+async def activity_logs(request: Request, model: str = "", status: str = "",
+                        limit: int = 100, offset: int = 0):
+    _require_admin(request)
+    supa = _state(request).supabase
+    import httpx
+    url = f"{supa.settings.supabase_url}/rest/v1/ai_requests"
+    headers = {
+        "apikey": supa.settings.supabase_service_role_key,
+        "Authorization": f"Bearer {supa.settings.supabase_service_role_key}",
+    }
+    params = {"select": "request_id,user_id,account_id,provider,model,status,error_code,"
+                        "total_tokens,latency_ms,started_at",
+              "order": "started_at.desc",
+              "limit": str(min(500, max(1, limit))),
+              "offset": str(max(0, offset))}
+    if model:
+        params["model"] = f"eq.{model}"
+    if status:
+        params["status"] = f"eq.{status}"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(url, params=params, headers=headers)
+        if response.status_code == 200:
+            return {"logs": response.json()}
+    except Exception as exc:  # noqa: BLE001
+        raise NexaError("INTERNAL_ERROR", f"Log query failed: {type(exc).__name__}")
+    return {"logs": []}
+
+
+# ============================================================================
+# Gateway API keys (dashboard-managed, hashed at rest)
+# ============================================================================
+@router.get("/admin/keys")
+async def list_keys(request: Request):
+    _require_admin(request)
+    supa = _state(request).supabase
+    keys = await supa.list_gateway_keys()
+    env_count = len(_state(request).settings.parse_gateway_keys())
+    return {"keys": keys, "env_keys": env_count}
+
+
+@router.post("/admin/keys")
+async def create_key(body: dict, request: Request):
+    _require_admin(request)
+    supa = _state(request).supabase
+    import secrets as _secrets
+    name = str(body.get("name") or "unnamed").strip()
+    account_id = str(body.get("account_id") or "").strip()
+    plan = str(body.get("plan") or "starter").strip()
+    if not name or not account_id:
+        raise NexaError("INVALID_REQUEST", "name and account_id are required")
+    token = "nxkey_" + _secrets.token_hex(16)
+    ok = await supa.create_gateway_key(
+        name=name, key_hash=supa.hash_key(token),
+        key_prefix=token[:12], account_id=account_id, plan=plan,
+        created_by="admin")
+    if not ok:
+        raise NexaError("INTERNAL_ERROR", "Key write failed")
+    return {"success": True, "token": token,
+            "note": "Store this token now — it is never shown again."}
+
+
+@router.delete("/admin/keys/{key_id}")
+async def revoke_key(key_id: str, request: Request):
+    _require_admin(request)
+    ok = await _state(request).supabase.set_gateway_key_enabled(key_id, False)
+    return {"success": ok}
+
+
+# ============================================================================
+# Usage limits: per-account overrides (ai_account_limits)
+# ============================================================================
+@router.get("/admin/limits")
+async def list_limits(request: Request):
+    _require_admin(request)
+    supa = _state(request).supabase
+    overrides = await supa.get_account_limit_rows()
+    profiles = await supa.list_profiles()
+    return {"overrides": overrides, "accounts": profiles}
+
+
+@router.put("/admin/limits/{account_id}")
+async def set_limit(account_id: str, body: dict, request: Request):
+    _require_admin(request)
+    supa = _state(request).supabase
+    row = {"account_id": account_id}
+    for field in ("plan_override", "requests_per_minute", "requests_per_hour",
+                  "concurrent_generations", "monthly_token_limit"):
+        if field in body and body[field] is not None:
+            row[field] = body[field]
+    ok = await supa.upsert_account_limit_row(row)
+    return {"success": ok}
+
+
+# ============================================================================
+# Subscriptions & teams (read-only)
+# ============================================================================
+@router.get("/admin/subscriptions")
+async def subscriptions(request: Request):
+    _require_admin(request)
+    supa = _state(request).supabase
+    import httpx
+    headers = {
+        "apikey": supa.settings.supabase_service_role_key,
+        "Authorization": f"Bearer {supa.settings.supabase_service_role_key}",
+    }
+    base = f"{supa.settings.supabase_url}/rest/v1"
+    out = {"profiles": [], "subscriptions": []}
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r1 = await client.get(base + "/profiles",
+                                  params={"select": "id,email,plan,created_at",
+                                          "order": "created_at.desc", "limit": "200"},
+                                  headers=headers)
+            if r1.status_code == 200:
+                out["profiles"] = r1.json()
+            r2 = await client.get(base + "/subscriptions",
+                                  params={"select": "id,user_id,organization_id,plan_id,status,seats,current_period_end",
+                                          "order": "created_at.desc", "limit": "100"},
+                                  headers=headers)
+            if r2.status_code == 200:
+                out["subscriptions"] = r2.json()
+    except Exception as exc:  # noqa: BLE001
+        raise NexaError("INTERNAL_ERROR", f"Subscription query failed: {type(exc).__name__}")
+    return out
+
+
+@router.get("/admin/teams")
+async def teams(request: Request):
+    _require_admin(request)
+    supa = _state(request).supabase
+    import httpx
+    headers = {
+        "apikey": supa.settings.supabase_service_role_key,
+        "Authorization": f"Bearer {supa.settings.supabase_service_role_key}",
+    }
+    base = f"{supa.settings.supabase_url}/rest/v1"
+    out = {"teams": []}
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r1 = await client.get(base + "/organizations",
+                                  params={"select": "id,name,slug,owner_id,created_at"},
+                                  headers=headers)
+            orgs = r1.json() if r1.status_code == 200 else []
+            for org in orgs:
+                members = []
+                r2 = await client.get(base + "/organization_members",
+                                      params={"select": "user_id,role",
+                                              "organization_id": f"eq.{org['id']}"},
+                                      headers=headers)
+                if r2.status_code == 200:
+                    members = r2.json()
+                out["teams"].append({**org, "members": members})
+    except Exception as exc:  # noqa: BLE001
+        raise NexaError("INTERNAL_ERROR", f"Teams query failed: {type(exc).__name__}")
+    return out
+
+
+# ============================================================================
+# Service configuration (system prompts, routing rules, agent config)
+# ============================================================================
+CONFIG_KEYS = ("system_prompt", "routing_rules", "agent_config")
+
+
+@router.get("/admin/config/{key}")
+async def get_config(key: str, request: Request):
+    _require_admin(request)
+    if key not in CONFIG_KEYS:
+        raise NexaError("INVALID_REQUEST", f"Unknown config key '{key}'")
+    supa = _state(request).supabase
+    row = await supa.get_config(key)
+    return {"key": key, "value": (row or {}).get("value", {}),
+            "updated_by": (row or {}).get("updated_by"),
+            "updated_at": (row or {}).get("updated_at")}
+
+
+@router.put("/admin/config/{key}")
+async def put_config(key: str, body: dict, request: Request):
+    _require_admin(request)
+    if key not in CONFIG_KEYS:
+        raise NexaError("INVALID_REQUEST", f"Unknown config key '{key}'")
+    supa = _state(request).supabase
+    ok = await supa.put_config(key, body.get("value", {}), "admin")
+    if not ok:
+        raise NexaError("INTERNAL_ERROR", "Config write failed")
+    return {"success": True}
+
+
+# ============================================================================
+# Client-facing published config (Nexcoder reads this)
+# ============================================================================
+@router.get("/config/{key}")
+async def public_config(key: str, request: Request):
+    state = _state(request)
+    identity = await state.authenticator.authenticate_request(
+        request.headers.get("authorization"))
+    if key not in CONFIG_KEYS:
+        raise NexaError("INVALID_REQUEST", f"Unknown config key '{key}'")
+    supa = state.supabase
+    row = await supa.get_config(key)
+    return {"key": key, "value": (row or {}).get("value", {})}

@@ -49,16 +49,28 @@ class Authenticator:
         return await self._authenticate_supabase(token)
 
     async def _authenticate_gateway_key(self, token: str) -> AuthIdentity:
+        # 1) Env-configured keys (NEXA_GATEWAY_KEYS).
         mapping = self._gateway_keys.get(token)
-        if mapping is None:
-            raise AuthenticationError("Invalid API key")
-        account_id, plan = mapping
-        return AuthIdentity(
-            user_id=account_id,
-            account_id=account_id,
-            plan=plan,
-            auth_method="gateway_key",
-        )
+        if mapping is not None:
+            account_id, plan = mapping
+            return AuthIdentity(
+                user_id=account_id,
+                account_id=account_id,
+                plan=plan,
+                auth_method="gateway_key",
+            )
+        # 2) Dashboard-managed keys (hashed in ai_gateway_keys).
+        db_key = await self._supabase.find_gateway_key(token)
+        if db_key is not None:
+            account_id = str(db_key.get("account_id") or "")
+            plan = str(db_key.get("plan") or self._default_plan)
+            return AuthIdentity(
+                user_id=account_id,
+                account_id=account_id,
+                plan=plan,
+                auth_method="gateway_key",
+            )
+        raise AuthenticationError("Invalid API key")
 
     async def _authenticate_supabase(self, token: str) -> AuthIdentity:
         identity = await self._supabase.verify_access_token(token)
