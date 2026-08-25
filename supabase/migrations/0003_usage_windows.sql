@@ -1,7 +1,6 @@
--- Nexa usage windows: 5-hour allowance + 7-day weekly cycle with one
--- complimentary renewal. All quota transitions are atomic (row locks) so
--- concurrent requests, multiple devices and retries cannot double-spend
--- or double-renew. Idempotent per request_id. Apply after 0001/0002.
+-- Nexa usage windows: 5-hour + daily + weekly allowances with one
+-- complimentary renewal. v2 — fully idempotent (safe to re-run over the
+-- earlier revision): adds missing columns, replaces policies and functions.
 
 -- ============================================================================
 -- 1. STATE + RESERVATIONS
@@ -27,6 +26,12 @@ create table if not exists public.ai_usage_state (
   created_at                   timestamptz not null default now()
 );
 
+-- Upgrade path for databases created by the earlier revision.
+alter table public.ai_usage_state add column if not exists daily_limit bigint not null default 0;
+alter table public.ai_usage_state add column if not exists daily_used bigint not null default 0;
+alter table public.ai_usage_state add column if not exists daily_window_started_at timestamptz;
+alter table public.ai_usage_state add column if not exists daily_window_ends_at timestamptz;
+
 create table if not exists public.ai_usage_reservations (
   request_id   text primary key,
   account_id   text not null,
@@ -40,8 +45,11 @@ create index if not exists ai_usage_reservations_account_idx
 
 alter table public.ai_usage_state enable row level security;
 alter table public.ai_usage_reservations enable row level security;
+
+drop policy if exists ai_usage_state_service_all on public.ai_usage_state;
 create policy ai_usage_state_service_all on public.ai_usage_state
   for all to service_role with check (true);
+drop policy if exists ai_usage_reservations_service_all on public.ai_usage_reservations;
 create policy ai_usage_reservations_service_all on public.ai_usage_reservations
   for all to service_role with check (true);
 
@@ -77,11 +85,13 @@ begin
   where account_id = p_account_id
   for update;
 
-  -- First successful request starts both clocks (never before).
+  -- First successful request starts all clocks (never before).
   if v_state.usage_started_at is null then
     v_state.usage_started_at := v_now;
     v_state.five_hour_window_started_at := v_now;
     v_state.five_hour_window_ends_at := v_now + interval '5 hours';
+    v_state.daily_window_started_at := v_now;
+    v_state.daily_window_ends_at := v_now + interval '24 hours';
     v_state.weekly_cycle_started_at := v_now;
     v_state.weekly_cycle_ends_at := v_now + interval '7 days';
   end if;
@@ -178,11 +188,16 @@ begin
     'allowed', true,
     'renewal_granted', v_renewal_granted,
     'five_hour_used', v_state.five_hour_used,
+    'daily_used', v_state.daily_used,
     'weekly_used', v_state.weekly_used);
 end;
 $$;
 
 grant execute on function public.ai_authorize_usage(text, bigint, bigint, integer, bigint, text) to service_role;
+-- Drop the stale signature from the earlier revision if present.
+drop function if exists public.ai_authorize_usage(text, bigint, bigint, integer, bigint, text);
+
+grant execute on function public.ai_authorize_usage(text, bigint, bigint, bigint, integer, bigint, text) to service_role;
 
 -- ============================================================================
 -- 3. FINALIZE (reconcile actual token usage) + RELEASE (infra failure)
@@ -207,6 +222,7 @@ begin
 
   update public.ai_usage_state set
     five_hour_used = greatest(0, five_hour_used + v_delta),
+    daily_used = greatest(0, daily_used + v_delta),
     weekly_used = greatest(0, weekly_used + v_delta),
     updated_at = now()
   where account_id = v_reservation.account_id;
@@ -232,6 +248,7 @@ begin
 
   update public.ai_usage_state set
     five_hour_used = greatest(0, five_hour_used - v_reservation.units),
+    daily_used = greatest(0, daily_used - v_reservation.units),
     weekly_used = greatest(0, weekly_used - v_reservation.units),
     updated_at = now()
   where account_id = v_reservation.account_id;
@@ -267,6 +284,7 @@ begin
 
   update public.ai_usage_state set
     five_hour_limit = p_five_hour_limit,
+    daily_limit = p_daily_limit,
     weekly_limit = p_weekly_limit,
     weekly_renewal_count = p_weekly_renewal_count,
     updated_at = now()
@@ -288,4 +306,9 @@ begin
 end;
 $$;
 
-grant execute on function public.ai_get_usage_state(text, bigint, bigint, integer) to service_role;
+grant execute on function public.ai_get_usage_state(text, bigint, bigint, bigint, integer) to service_role;
+-- Drop the stale signature from the earlier revision if present.
+drop function if exists public.ai_get_usage_state(text, bigint, bigint, integer);
+
+-- Drop the stale monthly-tokens-only signature from 0001's first revision.
+drop function if exists public.ai_get_usage_state(text, bigint, bigint, integer) cascade;
