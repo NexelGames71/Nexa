@@ -60,7 +60,10 @@ class Authenticator:
                 auth_method="gateway_key",
             )
         # 2) Dashboard-managed keys (hashed in ai_gateway_keys).
-        db_key = await self._supabase.find_gateway_key(token)
+        try:
+            db_key = await self._supabase.find_gateway_key(token)
+        except Exception:  # noqa: BLE001 — auth must fail closed
+            db_key = None
         if db_key is not None:
             account_id = str(db_key.get("account_id") or "")
             plan = str(db_key.get("plan") or self._default_plan)
