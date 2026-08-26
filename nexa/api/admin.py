@@ -414,3 +414,91 @@ async def audit_logs(request: Request, limit: int = 150):
     _require_admin(request)
     supa = _state(request).supabase
     return {"audit": await supa.list_audit(min(500, max(1, limit)))}
+
+# ============================================================================
+# Model operations: live test + per-model usage stats
+# ============================================================================
+@router.post("/admin/catalog/{model_id:path}/test")
+async def test_model(model_id: str, request: Request):
+    """Send a tiny live completion through the model's provider and report
+    latency and result. Real provider call — costs a few tokens."""
+    import time as _time
+
+    import httpx
+
+    _require_admin(request)
+    state = _state(request)
+    entry = await state.catalog.get(model_id)
+    if entry is None or not entry.get("enabled", True):
+        raise NexaError("MODEL_UNAVAILABLE", f"Model '{model_id}' is not enabled")
+    provider_name = entry.get("provider") or "nvidia"
+    provider = state.providers.get(provider_name)
+    if provider is None:
+        raise NexaError("MODEL_UNAVAILABLE", f"Provider '{provider_name}' not registered")
+
+    payload = {
+        "model": entry.get("provider_model") or model_id,
+        "messages": [{"role": "user", "content": "Reply with the single word: OK"}],
+        "max_tokens": 8,
+        "stream": False,
+    }
+    started = _time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                provider._url("chat/completions"),
+                json=payload, headers=provider._headers())
+        latency_ms = int((_time.monotonic() - started) * 1000)
+        if response.status_code == 200:
+            content = (response.json().get("choices") or [{}])[0].get(
+                "message", {}).get("content", "")
+            await state.supabase.audit("model.tested", model_id,
+                                       {"latency_ms": latency_ms, "ok": True})
+            return {"success": True, "latency_ms": latency_ms,
+                    "response": (content or "")[:120]}
+        await state.supabase.audit("model.tested", model_id,
+                                   {"ok": False, "status": response.status_code})
+        return {"success": False, "latency_ms": latency_ms,
+                "error": f"HTTP {response.status_code}"}
+    except Exception as exc:  # noqa: BLE001
+        return {"success": False,
+                "error": f"{type(exc).__name__}: {exc}"}
+
+
+@router.get("/admin/catalog/{model_id:path}/stats")
+async def model_stats(model_id: str, request: Request):
+    """Per-model usage summary: requests, tokens, error rate, last used."""
+    import httpx
+
+    _require_admin(request)
+    supa = _state(request).supabase
+    url = f"{supa.settings.supabase_url}/rest/v1/ai_requests"
+    headers = {
+        "apikey": supa.settings.supabase_service_role_key,
+        "Authorization": f"Bearer {supa.settings.supabase_service_role_key}",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(
+                url,
+                params={"select": "status,total_tokens,started_at,error_code",
+                        "model": f"eq.{model_id}",
+                        "order": "started_at.desc", "limit": "500"},
+                headers=headers,
+            )
+        if response.status_code != 200:
+            return {"requests": 0, "tokens": 0, "error_rate": 0, "last_used": None}
+        rows = response.json()
+        total = len(rows)
+        tokens = sum(int(r.get("total_tokens") or 0) for r in rows)
+        errors = sum(1 for r in rows if r.get("status") != "success")
+        return {
+            "requests": total,
+            "tokens": tokens,
+            "errors": errors,
+            "error_rate": round(errors * 100 / total, 1) if total else 0,
+            "last_used": rows[0].get("started_at") if rows else None,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"requests": 0, "tokens": 0, "error_rate": 0,
+                "last_used": None, "error": type(exc).__name__}

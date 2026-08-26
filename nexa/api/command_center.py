@@ -140,7 +140,7 @@ input:focus,select:focus{border-color:var(--blue)}
   <button class="tbtn" onclick="document.getElementById('sidebar').classList.toggle('collapsed')">☰</button>
   <div class="crumbs" id="crumbs">Nexa Command Center</div>
   <div class="spacer"></div>
-  <select class="tbtn" id="env"><option>Production</option><option>Staging</option><option>Development</option></select>
+  <select class="tbtn" id="env" onchange="switchEnv(this.value)"><option>Production</option><option>Staging</option><option>Development</option></select>
   <button class="tbtn" onclick="openPalette()">🔍 <span class="kbd">Ctrl K</span></button>
   <button class="tbtn" onclick="openNotifications()" title="Notifications">🔔</button>
   <span class="tbtn" style="pointer-events:none">Admin · Super Administrator</span>
@@ -233,7 +233,7 @@ async function renderDashboard(){
   catch(e){ $('#page').innerHTML = errState('Unable to load dashboard', e.message); return; }
   const provCount = Object.keys(s.providers).length;
   const enabled = cat.models.filter(m=>m.enabled).length;
-  $('#head-actions').innerHTML = `<button class="btn" onclick="ROUTE.page='models';buildNav();render()">+ Quick Action</button>`;
+  $('#head-actions').innerHTML = `<button class="btn" onclick="quickActions()">+ Quick Action</button>`;
   $('#page').innerHTML = `
   <div class="grid kpis">
     ${kpi('▣','var(--violet)','Total Models', s.total_models, enabled+' enabled')}
@@ -297,6 +297,8 @@ function renderModelsTable(q=''){
     <td><span class="badge gr">${esc(m.requires_plan||'starter')}</span></td>
     <td><span class="badge ${m.enabled?'g':'r'}">${m.enabled?'Enabled':'Disabled'}</span></td>
     <td style="text-align:right;white-space:nowrap">
+      <button class="btn ghost sm" onclick="modelDetails('${esc(m.id)}')">Details</button>
+      <button class="btn ghost sm" onclick="testModel('${esc(m.id)}', this)">Test</button>
       <button class="btn ghost sm" onclick="openEditor('${esc(m.id)}')">Edit</button>
       <button class="btn ghost sm" onclick="toggleModel('${esc(m.id)}',${!m.enabled})">${m.enabled?'Disable':'Enable'}</button>
       <button class="btn danger sm" onclick="delModel('${esc(m.id)}')">Delete</button>
@@ -343,6 +345,104 @@ async function delModel(id){
   if (!confirm(`Delete model "${id}"? NexCoder clients will lose access within 30 seconds.`)) return;
   try { await api('/admin/catalog/'+encodeURIComponent(id), {method:'DELETE'}); toast('Model removed'); renderModels(); }
   catch(e){ toast('Delete failed: '+e.message,'r'); }
+}
+
+/* ================= model test & details ================= */
+async function testModel(id, btn){
+  const old = btn.textContent; btn.textContent = 'Testing…'; btn.disabled = true;
+  try {
+    const r = await api('/admin/catalog/'+encodeURIComponent(id)+'/test', {method:'POST'});
+    btn.textContent = old; btn.disabled = false;
+    if (r.success) toast(`Test OK — ${r.latency_ms}ms · "${(r.response||'').trim().slice(0,40)}"`);
+    else toast('Test failed: '+(r.error||'unknown'), 'r');
+  } catch(e){ btn.textContent = old; btn.disabled = false; toast('Test failed: '+e.message,'r'); }
+}
+async function modelDetails(id){
+  let stats;
+  try { stats = await api('/admin/catalog/'+encodeURIComponent(id)+'/stats'); } catch(e){ stats = {error: e.message}; }
+  const m = MODELS.find(x=>x.id===id) || {};
+  const caps = (m.capabilities||[]).map(cp=>`<span class="badge b">${esc(cp)}</span>`).join(' ');
+  overlay(`<div class="drawer-bg" onclick="closeOverlay()"></div>
+  <div class="drawer open"><div class="drawer-head"><b>Model Details</b><button class="tbtn" onclick="closeOverlay()">✕</button></div>
+  <div class="drawer-body">
+   <h3 class="mono" style="margin-bottom:4px">${esc(id)}</h3>
+   <div style="margin-bottom:14px">${caps || '<span class="badge gr">no capabilities</span>'}</div>
+   <table style="font-size:12.5px"><tbody>
+    <tr><td style="color:var(--txt2)">Provider</td><td class="mono">${esc(m.provider||'')}</td></tr>
+    <tr><td style="color:var(--txt2)">Provider Model</td><td class="mono">${esc(m.provider_model||'')}</td></tr>
+    <tr><td style="color:var(--txt2)">Context Window</td><td class="mono">${fmtN(m.context_window)}</td></tr>
+    <tr><td style="color:var(--txt2)">Max Output</td><td class="mono">${fmtN(m.max_output_tokens)}</td></tr>
+    <tr><td style="color:var(--txt2)">Minimum Plan</td><td><span class="badge gr">${esc(m.requires_plan||'starter')}</span></td></tr>
+    <tr><td style="color:var(--txt2)">Status</td><td><span class="badge ${m.enabled?'g':'r'}">${m.enabled?'Enabled':'Disabled'}</span></td></tr>
+    <tr><td style="color:var(--txt2)">Requests (recent)</td><td class="mono">${stats.requests ?? 0}</td></tr>
+    <tr><td style="color:var(--txt2)">Tokens (recent)</td><td class="mono">${fmtN(stats.tokens ?? 0)}</td></tr>
+    <tr><td style="color:var(--txt2)">Error Rate</td><td>${stats.error_rate ?? 0}%</td></tr>
+    <tr><td style="color:var(--txt2)">Last Used</td><td class="mono" style="font-size:11px">${esc((stats.last_used||'never').replace('T',' ').slice(0,19))}</td></tr>
+   </tbody></table>
+   <div style="display:flex;gap:10px;margin-top:18px;flex-wrap:wrap">
+    <button class="btn" onclick="closeOverlay();openEditor('${esc(id)}')">Edit</button>
+    <button class="btn ghost" onclick="testModel('${esc(id)}', this)">Test</button>
+    <button class="btn ghost" onclick="closeOverlay();go('activity');setTimeout(()=>{const i=document.getElementById('log-model');if(i){i.value='${esc(id)}';loadLogs();}},200)">View Logs</button>
+   </div>
+  </div></div>`);
+}
+
+/* ================= quick actions ================= */
+function quickActions(){
+  overlay(`<div class="modal-bg" onclick="closeOverlay()"></div>
+  <div class="modal-card" style="position:fixed;top:16vh;left:50%;transform:translateX(-50%);z-index:130;width:420px">
+   <h3>Quick Actions</h3>
+   ${[['+ Add Model', "ROUTE.page='models';buildNav();render();setTimeout(()=>openEditor(null),150)"],
+      ['+ Add Webhook', "ROUTE.page='webhooks';buildNav();render();setTimeout(()=>showWebhookForm(),150)"],
+      ['+ Create API Key', "ROUTE.page='apikeys';buildNav();render();setTimeout(()=>showKeyForm(),150)"],
+      ['+ Create Backup', "createBackup()"],
+      ['Configure Limits', "ROUTE.page='ratelimits';buildNav();render()"]].map(([l,a])=>
+    `<div class="p-item" onclick="${a};closeOverlay()">${l}</div>`).join('')}
+  </div>`);
+}
+
+/* ================= roles & permissions ================= */
+const PERMISSIONS = ['models','providers','contexts','routing','usage','api_keys','users','teams','billing','logs','system'];
+const DEFAULT_ROLES = {
+  'Super Administrator': PERMISSIONS,
+  'Administrator': ['models','providers','contexts','routing','usage','api_keys','teams','logs'],
+  'Developer': ['models','contexts','routing'],
+  'Operator': ['usage','logs'],
+  'Analyst': ['usage','logs'],
+  'Viewer': [],
+};
+async function renderRoles(){
+  let data;
+  try { data = await api('/admin/config/roles'); } catch(e){ data = {value:{}}; }
+  const roles = data.value && Object.keys(data.value).length ? data.value : DEFAULT_ROLES;
+  window._roles = roles;
+  const matrix = PERMISSIONS.map(perm => `<tr><td class="mono">${perm}</td>` +
+    Object.keys(roles).map(r => `<td style="text-align:center">
+      <input type="checkbox" ${ (roles[r]||[]).includes(perm) ? 'checked':''}
+       onchange="setRolePerm('${esc(r)}','${perm}',this.checked)"></td>`).join('') + '</tr>').join('');
+  $('#page').innerHTML = `
+  <div class="card"><div class="panel-title">Roles & Permissions</div>
+  <div class="panel-sub">Published via <span class="mono">GET /v1/config/roles</span>. The admin API token currently grants full access; this matrix defines the target RBAC model for scoped tokens.</div>
+  <table><thead><tr><th>Permission</th>${Object.keys(roles).map(r=>`<th style="text-align:center;font-size:10.5px">${esc(r)}</th>`).join('')}</tr></thead>
+  <tbody>${matrix}</tbody></table>
+  <div style="display:flex;gap:10px;margin-top:14px">
+   <button class="btn" onclick="saveRoles()">Publish Roles</button>
+   <button class="btn ghost" onclick="addRole()">+ Add Role</button></div></div>`;
+}
+function setRolePerm(role, perm, on){
+  const list = _roles[role] || (_roles[role] = []);
+  if (on && !list.includes(perm)) list.push(perm);
+  if (!on) _roles[role] = list.filter(p=>p!==perm);
+}
+function addRole(){
+  const name = prompt('New role name:');
+  if (!name) return;
+  _roles[name] = []; drawRolesMatrix();
+}
+function drawRolesMatrix(){ renderRoles(); }
+async function saveRoles(){
+  try { await api('/admin/config/roles', {method:'PUT', body: JSON.stringify({value: _roles})}); toast('Roles published'); }
+  catch(e){ toast('Publish failed: '+e.message,'r'); }
 }
 
 /* ================= providers / usage / status ================= */
@@ -980,6 +1080,23 @@ window.openNotifications = async function(){
     || '<p style="color:var(--txt2)">No recent errors — all clear.</p>'}
   </div>`);
 };
+
+/* ================= environments ================= */
+function envKey(){ return 'nexa_env_' + (document.getElementById('env').value.toLowerCase()); }
+function switchEnv(name){
+  const key = 'nexa_env_' + name.toLowerCase();
+  const conf = JSON.parse(localStorage.getItem(key) || 'null');
+  const base = conf?.base || (name.toLowerCase()==='production' ? location.origin : '');
+  const url = prompt(`API base URL for ${name}:`, base || location.origin);
+  if (url === null) return;
+  const token = prompt(`Admin token for ${name}:`, conf?.token || TOKEN);
+  if (token === null) return;
+  localStorage.setItem(key, JSON.stringify({base: url, token}));
+  localStorage.setItem('nexa_admin_token', token);
+  TOKEN = token;
+  if (url && url !== location.origin) { location.href = url + '/v1/admin'; }
+  else { toast('Environment switched'); buildNav(); render(); }
+}
 
 /* ================= palette & overlay ================= */
 function overlay(html){ document.getElementById('overlays').innerHTML = `<div class="drawer-bg" onclick="closeOverlay()"></div>` + html; }
