@@ -723,6 +723,8 @@ const PAGE_INFO = {
   analytics: {purpose:'Request and token trends.', sections:{'Per-Model Breakdown':'Request counts and share per model today.'}},
   webhooks: {purpose:'Outgoing event notifications to external systems.', sections:{Events:'Subscribe a webhook to specific events (model.updated, provider.failure, usage.threshold).', Test:'Sends a test POST to verify reachability.'}},
   integrations: {purpose:'Connect external systems (Slack, Discord, monitoring) via incoming webhook URLs.', sections:{Configure:'Stores the integration webhook URL; alerts are POSTed to it.'}},
+  infra: {purpose:'Live 3D map of the NexCoder → Nexa → Router → Models → Providers → External APIs pipeline.',
+    sections:{Navigate:'Drag to orbit, scroll to zoom. Click any node for its live status and metrics.', Health:'Green = operational, amber/red = degraded or unconfigured. Data flows from gateway health.'}},
   backups: {purpose:'Point-in-time snapshots of the full configuration (catalog, limits, prompts, routing, integrations).', sections:{Create:'Captures the current configuration state.', Restore:'Applies a snapshot back over the live configuration — confirm before running.'}},
 };
 function showPageInfo(page){
@@ -1042,27 +1044,187 @@ async function savePrompt(){
 
 /* ================= infrastructure graph ================= */
 async function renderInfra(){
-  let provs, s;
-  try { [provs, s] = await Promise.all([api('/admin/providers'), api('/admin/stats')]); } catch(e){ $('#page').innerHTML = errState('Unable to load graph', e.message); return; }
-  const node = (id,label,sub,color,ok=true)=>`<div class="infra-node" style="border-color:${ok?color:'#e5484d'}55">
-   <div class="dot ${ok?'g':'r'}"></div><b>${label}</b><div style="font-size:10.5px;color:var(--txt2)" class="mono">${sub}</div></div>`;
-  const arrow = `<div style="text-align:center;color:var(--txt3);font-size:18px;line-height:1">↓</div>`;
-  const provNodes = Object.entries(provs.providers).map(([n,p])=>node(n, n[0].toUpperCase()+n.slice(1), (s.providers[n]||0)+' models', 'var(--cyan)', p.configured)).join(arrow);
-  $('#page').innerHTML = `<div style="max-width:640px;margin:0 auto;display:flex;flex-direction:column;gap:6px">
-   ${node('nexcoder','NexCoder Application','desktop · web · mobile','var(--violet)')}
-   ${arrow}
-   ${node('nexa','Nexa Service','auth · policies · usage windows · routing','var(--blue)')}
-   ${arrow}
-   ${node('router','Model Router','catalog-driven · '+s.total_models+' models','var(--cyan)')}
-   ${arrow}
-   ${provNodes || node('none','No providers','configure a provider','var(--red)',false)}
-   ${arrow}
-   ${node('ext','External AI APIs','NVIDIA NIM · OpenRouter','#5b6478')}
-  </div>
-  <p style="text-align:center;color:var(--txt3);font-size:11.5px;margin-top:14px">Click nodes in future milestones for per-node drills. Status is live from gateway health.</p>`;
+  $('#page').innerHTML = `<div class="card" style="min-height:420px;display:flex;align-items:center;justify-content:center">
+   <div style="text-align:center"><div class="skel" style="width:200px;margin:0 auto 12px"></div>
+   <span style="color:var(--txt2);font-size:12px">Loading infrastructure graph…</span></div></div>`;
+  // Lazy-load three.js from CDN, then build the scene.
+  if (!window.THREE) {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js';
+    s.onload = () => buildInfra3D();
+    s.onerror = () => { $('#page .card').innerHTML = '<div class="empty"><h3>3D libraries unavailable</h3><p>Three.js could not be loaded (offline or blocked). Live status remains available on the System Status page.</p></div>'; };
+    document.head.appendChild(s);
+  } else {
+    buildInfra3D();
+  }
 }
 
-/* ================= notifications bell ================= */
+let _infraCleanup = null;
+async function buildInfra3D(){
+  let provs, s, cat;
+  try { [provs, s, cat] = await Promise.all([api('/admin/providers'), api('/admin/stats'), api('/admin/catalog')]); }
+  catch(e){ $('#page').innerHTML = errState('Unable to load infrastructure', e.message); return; }
+
+  if (_infraCleanup) { _infraCleanup(); _infraCleanup = null; }
+  $('#page').innerHTML = `<div class="card" style="padding:0;overflow:hidden;position:relative">
+   <div id="infra3d" style="width:100%;height:560px;cursor:grab"></div>
+   <div style="position:absolute;top:14px;left:16px">
+     <div class="panel-title">Infrastructure Graph</div>
+     <div class="panel-sub">Drag to orbit · scroll to zoom · click a node for details</div></div>
+   <div id="infra-info" style="position:absolute;top:14px;right:16px;width:250px;display:none"></div>
+   <div style="position:absolute;bottom:12px;left:16px;font-size:10.5px;color:var(--txt3)">
+     <span class="dot g"></span>operational&nbsp;&nbsp;<span class="dot r"></span>degraded · live from gateway health</div>
+  </div>`;
+
+  const host = document.getElementById('infra3d');
+  const W = host.clientWidth || 900, H = host.clientHeight || 560;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0a0e1a);
+  scene.fog = new THREE.Fog(0x0a0e1a, 220, 520);
+
+  const camera = new THREE.PerspectiveCamera(50, W/H, 0.1, 1200);
+  let radius = 260, theta = 0.6, phi = 1.15;
+  function placeCamera(){
+    camera.position.set(radius*Math.sin(phi)*Math.cos(theta), radius*Math.cos(phi), radius*Math.sin(phi)*Math.sin(theta));
+    camera.lookAt(0,0,0);
+  }
+
+  const renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(W, H); renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  host.appendChild(renderer.domElement);
+  scene.add(new THREE.AmbientLight(0x8b9cc8, 0.9));
+  const key = new THREE.PointLight(0x6ea8ff, 2.2, 700); key.position.set(120,160,120); scene.add(key);
+  const fill = new THREE.PointLight(0x8b5cf6, 1.2, 700); fill.position.set(-140,-80,-100); scene.add(fill);
+
+  const nodeMeshes = [];
+  const nodeData = {};
+  function addNode(id, label, sub, x, y, z, color, ok=true){
+    const group = new THREE.Group();
+    const core = new THREE.Mesh(
+      new THREE.SphereGeometry(ok?7:6, 28, 28),
+      new THREE.MeshBasicMaterial({color: new THREE.Color(color)}));
+    group.add(core);
+    const halo = new THREE.Mesh(
+      new THREE.SphereGeometry(ok?10.5:9, 24, 24),
+      new THREE.MeshBasicMaterial({color: new THREE.Color(color), transparent:true, opacity:0.16}));
+    group.add(halo);
+    // label sprite
+    const cnv = document.createElement('canvas'); cnv.width=256; cnv.height=64;
+    const ctx = cnv.getContext('2d');
+    ctx.font = '600 22px Inter, sans-serif'; ctx.fillStyle = '#e5e9f2'; ctx.textAlign='center';
+    ctx.fillText(label, 128, 28);
+    ctx.font = '15px JetBrains Mono, monospace'; ctx.fillStyle = '#8b94ab';
+    ctx.fillText(sub, 128, 52);
+    const tex = new THREE.CanvasTexture(cnv);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true}));
+    sprite.scale.set(64, 16, 1); sprite.position.y = 20;
+    group.add(sprite);
+    group.position.set(x,y,z);
+    scene.add(group);
+    nodeMeshes.push(core); core.userData.nodeId = id; halo.userData = core.userData;
+    nodeData[id] = {label, sub, ok, group, core, halo};
+    return group;
+  }
+  function link(a, b, color=0x2b3b5e){
+    const A = nodeData[a].group.position, B = nodeData[b].group.position;
+    const geo = new THREE.BufferGeometry().setFromPoints([A, B]);
+    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({color, transparent:true, opacity:0.55}));
+    scene.add(line);
+  }
+
+  // ---- layout ----
+  addNode('nexcoder', 'NexCoder', 'desktop · web · mobile', 0, 95, 0, 0x8b5cf6);
+  addNode('nexa', 'Nexa Service', 'auth · policies · usage', 0, 45, 0, 0x3b82f6);
+  addNode('router', 'Model Router', s.total_models+' models', 0, 0, 0, 0x22d3ee);
+
+  const models = cat.models.filter(m=>m.enabled);
+  const mR = 62;
+  models.forEach((m,i)=>{
+    const a = (i/models.length)*Math.PI*2;
+    addNode('model:'+m.id, (m.display_name||m.id).slice(0,18), m.provider, Math.cos(a)*mR, -48, Math.sin(a)*mR, m.requires_plan==='starter'?0x22c55e:0x3b82f6);
+    link('router', 'model:'+m.id);
+  });
+
+  const provEntries = Object.entries(provs.providers);
+  const pR = 62;
+  provEntries.forEach(([name,p],i)=>{
+    const a = (i/provEntries.length)*Math.PI*2 + 0.5;
+    addNode('provider:'+name, name[0].toUpperCase()+name.slice(1), (counts(name)+' models'), Math.cos(a)*pR, -100, Math.sin(a)*pR, p.configured?0x22c55e:0xf59e0b);
+    link('nexa', 'provider:'+name, 0x22406b);
+  });
+  function counts(name){ return models.filter(m=>(m.provider||'nvidia')===name).length; }
+
+  // models -> their provider
+  models.forEach(m=>{
+    const pid = 'provider:'+(m.provider||'nvidia');
+    if (nodeData[pid]) link('model:'+m.id, pid, 0x1f3355);
+  });
+  // providers -> external APIs
+  if (nodeData['provider:nvidia']) addNode('api:nim','NVIDIA NIM API','integrate.api.nvidia.com', -70, -148, 0, 0x5b6478), link('provider:nvidia','api:nim',0x1f2937);
+  if (nodeData['provider:openrouter']) addNode('api:or','OpenRouter API','openrouter.ai', 70, -148, 0, 0x5b6478), link('provider:openrouter','api:or',0x1f2937);
+
+  link('nexcoder','nexa',0x3a3f6e); link('nexa','router',0x3a3f6e);
+
+  // ---- controls: custom orbit ----
+  let dragging=false, lx=0, ly=0, autoSpin = true;
+  host.addEventListener('mousedown', e=>{dragging=true; lx=e.clientX; ly=e.clientY; autoSpin=false; host.style.cursor='grabbing';});
+  window.addEventListener('mouseup', ()=>{dragging=false; host.style.cursor='grab';});
+  host.addEventListener('mousemove', e=>{ if(!dragging) return;
+    theta += (e.clientX-lx)*0.005; phi -= (e.clientY-ly)*0.005;
+    phi = Math.max(0.25, Math.min(2.6, phi)); lx=e.clientX; ly=e.clientY; placeCamera(); });
+  host.addEventListener('wheel', e=>{ e.preventDefault();
+    radius = Math.max(120, Math.min(520, radius + e.deltaY*0.3)); placeCamera(); }, {passive:false});
+
+  // ---- click raycast ----
+  const ray = new THREE.Raycaster(); const mouse = new THREE.Vector2();
+  let downAt = null;
+  host.addEventListener('mousedown', e=>{ downAt=[e.clientX,e.clientY]; });
+  host.addEventListener('mouseup', e=>{
+    if (!downAt || Math.hypot(e.clientX-downAt[0], e.clientY-downAt[1]) > 5) return;
+    const rect = host.getBoundingClientRect();
+    mouse.x = ((e.clientX-rect.left)/rect.width)*2-1;
+    mouse.y = -((e.clientY-rect.top)/rect.height)*2+1;
+    ray.setFromCamera(mouse, camera);
+    const hits = ray.intersectObjects(nodeMeshes);
+    if (hits.length){
+      const id = hits[0].object.userData.nodeId;
+      const d = nodeData[id];
+      const extra = id.startsWith('model:') ? (()=>{ const mm=(s.top_models||[]).find(t=>t.model===id.slice(6)); return mm? mm.requests+' requests today' : 'no requests today'; })()
+        : id.startsWith('provider:') ? (counts(id.split(':')[1])+' models routed')
+        : (id==='nexa' ? s.requests_today+' requests today' : d.sub);
+      const info = document.getElementById('infra-info');
+      info.style.display='block';
+      info.innerHTML = `<div class="card" style="padding:12px 14px">
+       <div style="display:flex;justify-content:space-between;align-items:center"><b>${esc(d.label)}</b>
+       <span class="badge ${d.ok?'g':'a'}">${d.ok?'Operational':'Degraded'}</span></div>
+       <div class="mono" style="font-size:11px;color:var(--txt2);margin-top:6px">${esc(extra||'')}</div></div>`;
+    } else {
+      document.getElementById('infra-info').style.display='none';
+    }
+  });
+
+  // ---- animation ----
+  let raf; const clock = new THREE.Clock();
+  function animate(){
+    raf = requestAnimationFrame(animate);
+    const t = clock.getElapsedTime();
+    if (autoSpin) theta += 0.0016;
+    for (const id in nodeData){
+      const halo = nodeData[id].halo;
+      halo.scale.setScalar(1 + Math.sin(t*2 + halo.id*0)%1*0.0 + 0.06*Math.sin(t*2 + id.length));
+    }
+    placeCamera();
+    renderer.render(scene, camera);
+  }
+  placeCamera(); animate();
+
+  const onResize = ()=>{ const w=host.clientWidth,h=host.clientHeight; camera.aspect=w/h; camera.updateProjectionMatrix(); renderer.setSize(w,h); };
+  window.addEventListener('resize', onResize);
+  _infraCleanup = ()=>{ cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); renderer.dispose(); };
+}
+
+/* ================= notifications bell ================= *//* ================= notifications bell ================= */
 async function loadNotifications(){
   let logs = [];
   try { logs = (await api('/admin/logs?status=error&limit=6')).logs; } catch(e){}
