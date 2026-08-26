@@ -142,7 +142,7 @@ input:focus,select:focus{border-color:var(--blue)}
   <div class="spacer"></div>
   <select class="tbtn" id="env"><option>Production</option><option>Staging</option><option>Development</option></select>
   <button class="tbtn" onclick="openPalette()">🔍 <span class="kbd">Ctrl K</span></button>
-  <button class="tbtn">🔔</button>
+  <button class="tbtn" onclick="openNotifications()" title="Notifications">🔔</button>
   <span class="tbtn" style="pointer-events:none">Admin · Super Administrator</span>
  </div>
  <div class="content" id="content"><div class="skel" style="width:40%"></div><div class="skel" style="width:90%;margin-top:14px"></div></div>
@@ -171,7 +171,7 @@ const NAV = [
  ['AI Configuration',[['models','Models','▣'],['providers','Providers','⛁'],['contexts','Contexts','▤'],['prompts','System Prompts','✎'],['routing','Routing Rules','⇄'],['agentcfg','Agent Configuration','⚙']]],
  ['Usage & Limits',[['usagelimits','Usage Limits','▮'],['ratelimits','Rate Limits','⏱'],['quotas','Quotas','◈'],['subscriptions','Subscriptions','★']]],
  ['Access & Security',[['apikeys','API Keys','⚿'],['teams','Teams','👥'],['roles','Roles & Permissions','⛨'],['audit','Audit Logs','☑']]],
- ['System',[['settings','Settings','⚙'],['webhooks','Webhooks','⚓'],['integrations','Integrations','⊕'],['backups','Backups','⭳'],['status','System Status','♥']]],
+ ['System',[['settings','Settings','⚙'],['webhooks','Webhooks','⚓'],['integrations','Integrations','⊕'],['backups','Backups','⭳'],['infra','Infrastructure Graph','🕸'],['status','System Status','♥']]],
 ];
 const TITLES = {dashboard:['Command Center','Monitor and manage the Nexa AI infrastructure.'],models:['Models','Manage every AI model available to NexCoder.'],providers:['Providers','Connected AI providers and their operational status.'],usagelimits:['Usage & Limits','Plan allowances, windows and live consumption.'],status:['System Status','Infrastructure health at a glance.']};
 function buildNav(){
@@ -186,7 +186,7 @@ function buildNav(){
     }
   }
 }
-const BUILT = new Set(['dashboard','models','providers','usagelimits','status','analytics','activity','apikeys','ratelimits','quotas','subscriptions','teams','prompts','routing','agentcfg','settings','webhooks','integrations','backups']);
+const BUILT = new Set(['dashboard','models','providers','usagelimits','status','analytics','activity','apikeys','ratelimits','quotas','subscriptions','teams','prompts','routing','agentcfg','settings','webhooks','integrations','backups','audit','contexts','infra']);
 const LABELS = Object.fromEntries(NAV.flatMap(([,items])=>items));
 
 function render(){
@@ -213,6 +213,9 @@ function render(){
   else if (page==='routing') renderConfig('routing_rules', 'Routing Rules');
   else if (page==='agentcfg') renderConfig('agent_config', 'Agent Configuration');
   else if (page==='settings') renderSettings();
+  else if (page==='audit') renderAudit();
+  else if (page==='contexts') renderContexts();
+  else if (page==='infra') renderInfra();
   else if (page==='webhooks') renderWebhooks();
   else if (page==='integrations') renderIntegrations();
   else if (page==='backups') renderBackups();
@@ -385,12 +388,34 @@ async function renderStatus(){
 }
 async function renderAnalytics(){
   let s; try { s = await api('/admin/stats'); } catch(e){ $('#page').innerHTML = errState('Unable to load analytics', e.message); return; }
-  $('#page').innerHTML = `<div class="card"><div class="panel-title">Requests Today</div><div class="panel-sub">${s.requests_today} requests · ${fmtN(s.tokens_today)} tokens</div>
+  const daily = s.daily || [];
+  const line = lineChart(daily);
+  $('#page').innerHTML = `<div class="card"><div class="panel-title">Requests — Last 14 Days</div><div class="panel-sub">Daily volume across all accounts</div>${line}</div>
+  <div class="card" style="margin-top:14px"><div class="panel-title">Requests Today</div><div class="panel-sub">${s.requests_today} requests · ${fmtN(s.tokens_today)} tokens</div>
   ${barChart(s.top_models)}</div>
   <div class="card" style="margin-top:14px"><div class="panel-title">Per-Model Breakdown</div>
   <table><thead><tr><th>Model</th><th>Requests</th><th>Share</th></tr></thead><tbody>
   ${s.top_models.map(t=>`<tr><td class="mono">${esc(t.model)}</td><td>${t.requests}</td><td>${t.percentage}%</td></tr>`).join('') || '<tr><td colspan=3 style="color:var(--txt2)">No data today.</td></tr>'}
   </tbody></table></div>`;
+}
+function lineChart(daily){
+  if (!daily || daily.length < 2) return '<div class="empty" style="padding:24px">Not enough data yet — charts appear after a few days of traffic.</div>';
+  const W=640,H=200,P=28;
+  const max = Math.max(...daily.map(d=>+d.requests),1);
+  const pts = daily.map((d,i)=>[P + i*(W-P*2)/(daily.length-1), H-P - (d.requests/max)*(H-P*2)]);
+  const path = pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+  const area = path + ` L${pts[pts.length-1][0].toFixed(1)} ${H-P} L${pts[0][0].toFixed(1)} ${H-P} Z`;
+  const labels = daily.filter((_,i)=>i%Math.ceil(daily.length/6)===0).map(d=>`<text x="${P + daily.indexOf(d)*(W-P*2)/(daily.length-1)}" y="${H-6}" fill="#5b6478" font-size="9" text-anchor="middle">${(d.day||'').slice(5)}</text>`).join('');
+  return `<svg width="100%" viewBox="0 0 ${W} ${H}">
+   <defs><linearGradient id="lg" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#3b82f6" stop-opacity=".35"/><stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/></linearGradient></defs>
+   <path d="${area}" fill="url(#lg)"/>
+   <path d="${path}" fill="none" stroke="#3b82f6" stroke-width="2"/>
+   ${pts.map(p=>`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3" fill="#0d1220" stroke="#3b82f6" stroke-width="1.5"/>`).join('')}
+   ${labels}</svg>
+   <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--txt2);margin-top:6px">
+    <span>Total: ${fmtN(daily.reduce((a,d)=>a+(+d.requests||0),0))} requests</span>
+    <span>Peak: ${fmtN(max)}/day</span></div>`;
 }
 function barChart(top){
   const max = Math.max(...top.map(t=>t.requests), 1);
@@ -739,6 +764,222 @@ async function delBackup(id){
   try { await api('/admin/backups/'+id, {method:'DELETE'}); toast('Deleted'); renderBackups(); }
   catch(e){ toast('Failed: '+e.message,'r'); }
 }
+
+/* ================= audit ================= */
+async function renderAudit(){
+  let data;
+  try { data = await api('/admin/audit'); } catch(e){ $('#page').innerHTML = errState('Unable to load audit trail', e.message); return; }
+  $('#page').innerHTML = `<div class="card"><div class="panel-title">Security & Configuration Audit</div>
+  <div class="panel-sub">Every administrative mutation: models, keys, limits, configuration.</div>
+  <table><thead><tr><th>Time</th><th>Action</th><th>Resource</th><th>Admin</th><th>Details</th></tr></thead><tbody>
+  ${(data.audit||[]).map(a=>`<tr><td style="color:var(--txt2)" class="mono">${(a.created_at||'').replace('T',' ').slice(0,19)}</td>
+   <td><span class="badge b">${esc(a.action)}</span></td><td class="mono">${esc(a.resource||'')}</td>
+   <td>${esc(a.admin||'')}</td>
+   <td class="mono" style="font-size:11px;color:var(--txt2)">${esc(JSON.stringify(a.details||{}).slice(0,90))}</td></tr>`).join('')
+   || '<tr><td colspan=5 style="color:var(--txt2)">No audit entries yet — make a change in Models or Keys.</td></tr>'}
+  </tbody></table></div>`;
+}
+
+/* ================= contexts ================= */
+async function renderContexts(){
+  let data;
+  try { data = await api('/admin/config/contexts'); } catch(e){ data = {value:{}}; }
+  const ctxs = data.value || {};
+  const ids = Object.keys(ctxs);
+  $('#head-actions').innerHTML = `<button class="btn" onclick="editContext('${ids[0]||''}')">+ Add Context</button>`;
+  $('#page').innerHTML = `<div class="card"><div class="panel-title">Execution Contexts</div>
+  <div class="panel-sub">Per-context token budgets, model policy and system prompt. Published to clients via <span class="mono">GET /v1/config/contexts</span>.</div>
+  <table><thead><tr><th>Context</th><th>Provider</th><th>Max Context</th><th>Max Output</th><th>Default Model</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+  ${ids.map(id=>{const x=ctxs[id];return `<tr><td><b>${esc(x.name||id)}</b><br><span class="mono" style="font-size:10px;color:var(--txt3)">${esc(id)}</span></td>
+   <td>${esc(x.provider||'nexa')}</td><td class="mono">${fmtN(x.max_context||0)}</td><td class="mono">${fmtN(x.max_output||0)}</td>
+   <td class="mono" style="font-size:11px">${esc(x.default_model||'—')}</td>
+   <td style="text-align:right"><button class="btn ghost sm" onclick="editContext('${esc(id)}')">Edit</button>
+   <button class="btn danger sm" onclick="delContext('${esc(id)}')">Delete</button></td></tr>`}).join('')
+   || '<tr><td colspan=6 style="color:var(--txt2)">No contexts yet — add one to define token budgets and prompts.</td></tr>'}
+  </tbody></table></div><div id="ctx-form"></div>`;
+}
+function editContext(id){
+  let data = {};
+  // fetch current value lazily
+  api('/admin/config/contexts').then(r=>{
+    const ctxs = r.value || {};
+    const x = ctxs[id] || {name:'',provider:'nexa',max_context:65536,max_output:8192,default_model:'',fallback_model:'',system_prompt:''};
+    document.getElementById('ctx-form').innerHTML = `<div class="card" style="margin-top:14px">
+    <div class="panel-title">${id?'Edit':'Add'} Context ${id?`— <span class="mono">${esc(id)}</span>`:''}</div>
+    <div class="row" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
+     <input id="cx-id" value="${esc(id || '')}" placeholder="context id" ${id?'disabled':''} style="width:180px">
+     <input id="cx-name" value="${esc(x.name||'')}" placeholder="Name" style="width:180px">
+     <input id="cx-provider" value="${esc(x.provider||'nexa')}" placeholder="preferred provider" style="width:160px">
+     <input id="cx-model" value="${esc(x.default_model||'')}" placeholder="default model" style="width:220px">
+     <input id="cx-fb" value="${esc(x.fallback_model||'')}" placeholder="fallback model" style="width:220px"></div>
+    <div class="row" style="display:flex;gap:10px;margin-top:10px">
+     <input id="cx-maxc" type="number" value="${x.max_context||65536}" placeholder="max context" style="width:160px">
+     <input id="cx-maxo" type="number" value="${x.max_output||8192}" placeholder="max output" style="width:160px"></div>
+    <div class="field" style="margin-top:10px"><label>System Prompt</label>
+     <textarea id="cx-prompt" style="width:100%;min-height:120px;background:#0f1524;color:#d8e0f0;border:1px solid var(--line2);border-radius:8px;padding:12px;font-family:var(--mono);font-size:12px">${esc(x.system_prompt||'')}</textarea></div>
+    <button class="btn" onclick="saveContext('${esc(id)}')">Save Context</button></div>`;
+  });
+}
+async function saveContext(originalId){
+  const id = document.getElementById('cx-id').value.trim();
+  if (!id) { toast('Context id required','r'); return; }
+  let cfg = {}; try { cfg = (await api('/admin/config/contexts')).value || {}; } catch(e){}
+  cfg[id] = {
+    name: document.getElementById('cx-name').value,
+    provider: document.getElementById('cx-provider').value,
+    default_model: document.getElementById('cx-model').value,
+    fallback_model: document.getElementById('cx-fb').value,
+    max_context: +document.getElementById('cx-maxc').value,
+    max_output: +document.getElementById('cx-maxo').value,
+    system_prompt: document.getElementById('cx-prompt').value,
+  };
+  try { await api('/admin/config/contexts', {method:'PUT', body: JSON.stringify({value: cfg})}); toast('Context saved'); renderContexts(); }
+  catch(e){ toast('Save failed: '+e.message,'r'); }
+}
+async function delContext(id){
+  if (!confirm('Delete context "'+id+'"?')) return;
+  let cfg = {}; try { cfg = (await api('/admin/config/contexts')).value || {}; } catch(e){}
+  delete cfg[id];
+  await api('/admin/config/contexts', {method:'PUT', body: JSON.stringify({value: cfg})});
+  toast('Context deleted'); renderContexts();
+}
+
+/* ================= structured routing editor ================= */
+async function renderRouting(){
+  let data;
+  try { data = await api('/admin/config/routing_rules'); } catch(e){ data = {value:{}}; }
+  const rules = data.value?.rules || [];
+  window._rules = rules;
+  drawRules();
+}
+function drawRules(){
+  $('#page').innerHTML = `<div class="card"><div class="panel-title">Routing Rules</div>
+  <div class="panel-sub">Evaluated in priority order. Published via <span class="mono">GET /v1/config/routing_rules</span>.</div>
+  <table><thead><tr><th>#</th><th>Condition</th><th>Action</th><th>Target</th><th style="text-align:right">Actions</th></tr></thead><tbody id="rule-rows">
+  ${(window._rules||[]).map((r,i)=>`<tr>
+   <td class="mono">${i+1}</td>
+   <td><input value="${esc(r.condition||'')}" onchange="_rules[${i}].condition=this.value" style="width:220px"></td>
+   <td><input value="${esc(r.action||'')}" onchange="_rules[${i}].action=this.value" style="width:140px"></td>
+   <td><input value="${esc(r.target||'')}" onchange="_rules[${i}].target=this.value" style="width:220px"></td>
+   <td style="text-align:right;white-space:nowrap">
+    <button class="btn ghost sm" onclick="moveRule(${i},-1)">↑</button>
+    <button class="btn ghost sm" onclick="moveRule(${i},1)">↓</button>
+    <button class="btn danger sm" onclick="delRule(${i})">✕</button></td></tr>`).join('')}
+  </tbody></table>
+  <div style="display:flex;gap:10px;margin-top:14px">
+   <button class="btn ghost" onclick="addRule()">+ Add Rule</button>
+   <button class="btn" onclick="publishRules()">Publish Rules</button></div></div>`;
+}
+function addRule(){ _rules.push({condition:'model_unavailable', action:'fallback', target:'stepfun-ai/step-3.7-flash'}); drawRules(); }
+function delRule(i){ _rules.splice(i,1); drawRules(); }
+function moveRule(i,dir){ const j=i+dir; if(j<0||j>=_rules.length) return; [_rules[i],_rules[j]]=[_rules[j],_rules[i]]; drawRules(); }
+async function publishRules(){
+  try { await api('/admin/config/routing_rules', {method:'PUT', body: JSON.stringify({value:{rules:_rules}})}); toast('Routing rules published'); }
+  catch(e){ toast('Publish failed: '+e.message,'r'); }
+}
+
+/* ================= structured agent config ================= */
+async function renderAgentcfg(){
+  let data;
+  try { data = await api('/admin/config/agent_config'); } catch(e){ data = {value:{}}; }
+  const a = data.value || {};
+  const tog = (k,label,val)=>`<label style="display:flex;gap:8px;align-items:center;background:var(--panel2);border:1px solid var(--line2);border-radius:7px;padding:8px 12px;font-size:12.5px;cursor:pointer">
+   <input type="checkbox" id="ac-${k}" ${val?'checked':''}> ${label}</label>`;
+  const num = (k,label,val)=>`<div class="field"><label data-tip="Maximum ${label.toLowerCase()} per agent run">${label}</label><input id="ac-${k}" type="number" value="${val??0}" style="width:140px"></div>`;
+  $('#page').innerHTML = `<div class="card"><div class="panel-title">Agent Configuration</div>
+  <div class="panel-sub">Published via <span class="mono">GET /v1/config/agent_config</span> — NexCoder applies it to every agent run.</div>
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-bottom:16px">
+   ${num('max_iterations','Max Iterations', a.max_iterations ?? 12)}
+   ${num('max_tool_iterations','Tool Iterations', a.max_tool_iterations ?? 12)}
+   ${num('max_turns','Max Turns', a.max_turns ?? 30)}
+  </div>
+  <div class="checks" style="margin-bottom:16px">
+   ${tog('planning_enabled','Planning', a.planning_enabled)}
+   ${tog('parallel_tools','Parallel Tools', a.parallel_tools)}
+   ${tog('memory_enabled','Memory', a.memory_enabled)}
+   ${tog('code_execution','Code Execution', a.code_execution)}
+   ${tog('browser_access','Browser Access', a.browser_access)}
+   ${tog('terminal_access','Terminal Access', a.terminal_access)}
+  </div>
+  <div class="field"><label>Sub-Agents (comma separated)</label>
+   <input id="ac-sub" value="${esc((a.sub_agents||[]).join(', '))}" style="width:100%"></div>
+  <button class="btn" onclick="saveAgentCfg()">Publish Agent Configuration</button></div>`;
+}
+async function saveAgentCfg(){
+  const g = k => document.getElementById('ac-'+k)?.checked || false;
+  const n = k => +document.getElementById('ac-'+k)?.value || 0;
+  const value = {
+    max_iterations: n('max_iterations'), max_tool_iterations: n('max_tool_iterations'),
+    max_turns: n('max_turns'),
+    planning_enabled: g('planning_enabled'), parallel_tools: g('parallel_tools'),
+    memory_enabled: g('memory_enabled'), code_execution: g('code_execution'),
+    browser_access: g('browser_access'), terminal_access: g('terminal_access'),
+    sub_agents: document.getElementById('ac-sub').value.split(',').map(s=>s.trim()).filter(Boolean),
+  };
+  try { await api('/admin/config/agent_config', {method:'PUT', body: JSON.stringify({value})}); toast('Agent configuration published'); }
+  catch(e){ toast('Publish failed: '+e.message,'r'); }
+}
+
+/* ================= system prompt editor ================= */
+async function renderPrompts(){
+  let data;
+  try { data = await api('/admin/config/system_prompt'); } catch(e){ data = {value:{}}; }
+  const v = data.value || {};
+  $('#page').innerHTML = `<div class="card"><div class="panel-title">System Prompt</div>
+  <div class="panel-sub">Base instructions for every NexCoder agent. Published via <span class="mono">GET /v1/config/system_prompt</span>. Version: <b>${v.version||1}</b></div>
+  <textarea id="sp-content" spellcheck="false" style="width:100%;min-height:320px;background:#0f1524;color:#d8e0f0;border:1px solid var(--line2);border-radius:8px;padding:14px;font-family:var(--mono);font-size:12.5px">${esc(v.content||'')}</textarea>
+  <div style="display:flex;gap:10px;margin-top:12px;align-items:center">
+   <button class="btn" onclick="savePrompt()">Publish Prompt</button>
+   <span style="font-size:11px;color:var(--txt3)">Version increments automatically on publish.</span></div></div>`;
+}
+async function savePrompt(){
+  let v; try { v = JSON.parse(JSON.stringify(await (await api('/admin/config/system_prompt')).json?.() || {})); } catch(e){}
+  let current; try { current = (await api('/admin/config/system_prompt')).value || {}; } catch(e){ current = {}; }
+  const value = {content: document.getElementById('sp-content').value, version: (current.version||1)+1};
+  try { await api('/admin/config/system_prompt', {method:'PUT', body: JSON.stringify({value})}); toast('Prompt published (v'+value.version+')'); renderPrompts(); }
+  catch(e){ toast('Publish failed: '+e.message,'r'); }
+}
+
+/* ================= infrastructure graph ================= */
+async function renderInfra(){
+  let provs, s;
+  try { [provs, s] = await Promise.all([api('/admin/providers'), api('/admin/stats')]); } catch(e){ $('#page').innerHTML = errState('Unable to load graph', e.message); return; }
+  const node = (id,label,sub,color,ok=true)=>`<div class="infra-node" style="border-color:${ok?color:'#e5484d'}55">
+   <div class="dot ${ok?'g':'r'}"></div><b>${label}</b><div style="font-size:10.5px;color:var(--txt2)" class="mono">${sub}</div></div>`;
+  const arrow = `<div style="text-align:center;color:var(--txt3);font-size:18px;line-height:1">↓</div>`;
+  const provNodes = Object.entries(provs.providers).map(([n,p])=>node(n, n[0].toUpperCase()+n.slice(1), (s.providers[n]||0)+' models', 'var(--cyan)', p.configured)).join(arrow);
+  $('#page').innerHTML = `<div style="max-width:640px;margin:0 auto;display:flex;flex-direction:column;gap:6px">
+   ${node('nexcoder','NexCoder Application','desktop · web · mobile','var(--violet)')}
+   ${arrow}
+   ${node('nexa','Nexa Service','auth · policies · usage windows · routing','var(--blue)')}
+   ${arrow}
+   ${node('router','Model Router','catalog-driven · '+s.total_models+' models','var(--cyan)')}
+   ${arrow}
+   ${provNodes || node('none','No providers','configure a provider','var(--red)',false)}
+   ${arrow}
+   ${node('ext','External AI APIs','NVIDIA NIM · OpenRouter','#5b6478')}
+  </div>
+  <p style="text-align:center;color:var(--txt3);font-size:11.5px;margin-top:14px">Click nodes in future milestones for per-node drills. Status is live from gateway health.</p>`;
+}
+
+/* ================= notifications bell ================= */
+async function loadNotifications(){
+  let logs = [];
+  try { logs = (await api('/admin/logs?status=error&limit=6')).logs; } catch(e){}
+  return logs;
+}
+window.openNotifications = async function(){
+  const logs = await loadNotifications();
+  overlay(`<div class="modal-bg" onclick="closeOverlay()"></div>
+  <div class="modal-card" style="position:fixed;top:60px;right:24px;left:auto;transform:none;z-index:130;min-width:380px">
+   <div style="display:flex;justify-content:space-between;align-items:center"><h3>Notifications</h3><button class="tbtn" onclick="closeOverlay()">✕</button></div>
+   <h4>Recent Errors</h4>
+   ${(logs||[]).map(l=>`<div style="border-bottom:1px solid var(--line);padding:7px 0;font-size:12px">
+    <span class="badge r">${esc(l.error_code||l.status)}</span> <span class="mono">${esc(l.model||'')}</span>
+    <div class="mono" style="font-size:10px;color:var(--txt3)">${esc(l.request_id||'')} · ${(l.started_at||'').replace('T',' ').slice(5,19)}</div></div>`).join('')
+    || '<p style="color:var(--txt2)">No recent errors — all clear.</p>'}
+  </div>`);
+};
 
 /* ================= palette & overlay ================= */
 function overlay(html){ document.getElementById('overlays').innerHTML = `<div class="drawer-bg" onclick="closeOverlay()"></div>` + html; }

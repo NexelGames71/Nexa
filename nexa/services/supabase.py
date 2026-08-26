@@ -370,7 +370,23 @@ class SupabaseService:
 
     # -- accounts: profiles / organizations ------------------------------------
 
-    # -- webhooks ----------------------------------------------------------------
+    # -- admin audit trail ---------------------------------------------------------
+
+    async def audit(self, action: str, resource: str | None = None,
+                    details: dict | None = None, admin: str = "admin") -> None:
+        try:
+            await self._insert_row("ai_admin_audit", {
+                "action": action, "resource": resource,
+                "details": details or {}, "admin": admin})
+        except Exception as exc:  # noqa: BLE001 — audit is best-effort
+            logger.debug("audit write failed: %s", type(exc).__name__)
+
+    async def list_audit(self, limit: int = 100) -> list[dict]:
+        return await self._get_rows("ai_admin_audit",
+                                    "id,action,resource,admin,details,created_at",
+                                    order="created_at.desc", filters=None) or []
+
+        # -- webhooks ----------------------------------------------------------------
 
     async def list_webhooks(self) -> list[dict]:
         return await self._get_rows("ai_webhooks",

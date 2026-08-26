@@ -156,6 +156,7 @@ async def create_key(body: dict, request: Request):
         created_by="admin")
     if not ok:
         raise NexaError("INTERNAL_ERROR", "Key write failed")
+    await supa.audit("key.created", token[:12], {"account_id": account_id, "plan": plan})
     return {"success": True, "token": token,
             "note": "Store this token now — it is never shown again."}
 
@@ -164,6 +165,7 @@ async def create_key(body: dict, request: Request):
 async def revoke_key(key_id: str, request: Request):
     _require_admin(request)
     ok = await _state(request).supabase.set_gateway_key_enabled(key_id, False)
+    await _state(request).supabase.audit("key.revoked", key_id)
     return {"success": ok}
 
 
@@ -189,6 +191,7 @@ async def set_limit(account_id: str, body: dict, request: Request):
         if field in body and body[field] is not None:
             row[field] = body[field]
     ok = await supa.upsert_account_limit_row(row)
+    await supa.audit("limits.updated", account_id, row)
     return {"success": ok}
 
 
@@ -283,6 +286,7 @@ async def put_config(key: str, body: dict, request: Request):
     ok = await supa.put_config(key, body.get("value", {}), "admin")
     if not ok:
         raise NexaError("INTERNAL_ERROR", "Config write failed")
+    await supa.audit("config.published", key)
     return {"success": True}
 
 
@@ -324,6 +328,7 @@ async def create_webhook(body: dict, request: Request):
     })
     if not ok:
         raise NexaError("INTERNAL_ERROR", "Webhook write failed")
+    await supa.audit("webhook.created", url)
     return {"success": True}
 
 
@@ -399,3 +404,13 @@ async def delete_backup(backup_id: str, request: Request):
     _require_admin(request)
     ok = await _state(request).supabase.delete_backup(backup_id)
     return {"success": ok}
+
+
+# ============================================================================
+# Admin audit trail
+# ============================================================================
+@router.get("/admin/audit")
+async def audit_logs(request: Request, limit: int = 150):
+    _require_admin(request)
+    supa = _state(request).supabase
+    return {"audit": await supa.list_audit(min(500, max(1, limit)))}
