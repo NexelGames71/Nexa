@@ -299,3 +299,103 @@ async def public_config(key: str, request: Request):
     supa = state.supabase
     row = await supa.get_config(key)
     return {"key": key, "value": (row or {}).get("value", {})}
+
+# ============================================================================
+# Webhooks — outgoing event notifications
+# ============================================================================
+@router.get("/admin/webhooks")
+async def list_webhooks(request: Request):
+    _require_admin(request)
+    hooks = await _state(request).supabase.list_webhooks()
+    return {"webhooks": hooks}
+
+
+@router.post("/admin/webhooks")
+async def create_webhook(body: dict, request: Request):
+    _require_admin(request)
+    url = str(body.get("url") or "").strip()
+    if not url.startswith(("http://", "https://")):
+        raise NexaError("INVALID_REQUEST", "A valid https URL is required")
+    ok = await _state(request).supabase.create_webhook({
+        "url": url,
+        "secret": str(body.get("secret") or ""),
+        "events": body.get("events") or ["model.updated", "provider.failure"],
+        "enabled": bool(body.get("enabled", True)),
+    })
+    if not ok:
+        raise NexaError("INTERNAL_ERROR", "Webhook write failed")
+    return {"success": True}
+
+
+@router.delete("/admin/webhooks/{webhook_id}")
+async def delete_webhook(webhook_id: str, request: Request):
+    _require_admin(request)
+    ok = await _state(request).supabase.delete_webhook(webhook_id)
+    return {"success": ok}
+
+
+@router.post("/admin/webhooks/test")
+async def test_webhook(body: dict, request: Request):
+    """POST a test event to an arbitrary webhook URL."""
+    _require_admin(request)
+    import httpx
+    target = str(body.get("url") or "").strip()
+    if not target.startswith(("http://", "https://")):
+        raise NexaError("INVALID_REQUEST", "A valid https URL is required")
+    payload = {"event": "test", "service": "nexa", "timestamp": _state(request).settings.env}
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.post(target, json=payload, timeout=8.0)
+        return {"success": True, "status": response.status_code}
+    except Exception as exc:  # noqa: BLE001
+        return {"success": False, "error": f"{type(exc).__name__}"}
+
+
+# ============================================================================
+# Backups — configuration snapshots (catalog + config + limits)
+# ============================================================================
+@router.get("/admin/backups")
+async def list_backups(request: Request):
+    _require_admin(request)
+    supa = _state(request).supabase
+    backups = await supa.list_backups()
+    for b in backups:
+        b.pop("payload", None)
+    return {"backups": backups}
+
+
+@router.post("/admin/backups")
+async def create_backup(request: Request):
+    _require_admin(request)
+    state = _state(request)
+    supa = state.supabase
+    catalog = await state.catalog.get_models(include_disabled=True)
+    payload: dict = {
+        "catalog": catalog,
+        "limits": await supa.get_account_limit_rows(),
+    }
+    for key in ("system_prompt", "routing_rules", "agent_config", "integrations"):
+        row = await supa.get_config(key)
+        payload[key] = (row or {}).get("value", {})
+    ok = await supa.create_backup(
+        label=f"config snapshot {len(catalog)} models",
+        payload=payload, created_by="admin")
+    if not ok:
+        raise NexaError("INTERNAL_ERROR", "Backup write failed")
+    return {"success": True}
+
+
+@router.get("/admin/backups/{backup_id}")
+async def download_backup(backup_id: str, request: Request):
+    _require_admin(request)
+    backup = await _state(request).supabase.get_backup(backup_id)
+    if backup is None:
+        raise NexaError("MODEL_UNAVAILABLE", "Backup not found")
+    return backup
+
+
+@router.delete("/admin/backups/{backup_id}")
+async def delete_backup(backup_id: str, request: Request):
+    _require_admin(request)
+    ok = await _state(request).supabase.delete_backup(backup_id)
+    return {"success": ok}

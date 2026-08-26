@@ -370,6 +370,104 @@ class SupabaseService:
 
     # -- accounts: profiles / organizations ------------------------------------
 
+    # -- webhooks ----------------------------------------------------------------
+
+    async def list_webhooks(self) -> list[dict]:
+        return await self._get_rows("ai_webhooks",
+                                    "id,url,secret,events,enabled,created_at")
+
+    async def create_webhook(self, row: dict) -> bool:
+        return await self._insert_row("ai_webhooks", row)
+
+    async def delete_webhook(self, webhook_id: str) -> bool:
+        return await self._delete_row("ai_webhooks", "id", webhook_id)
+
+    # -- config backups ------------------------------------------------------------
+
+    async def list_backups(self) -> list[dict]:
+        return await self._get_rows("ai_config_backups",
+                                    "id,label,created_by,created_at",
+                                    order="created_at.desc")
+
+    async def create_backup(self, label: str, payload: dict, created_by: str) -> bool:
+        return await self._insert_row("ai_config_backups",
+                                      {"label": label, "payload": payload,
+                                       "created_by": created_by})
+
+    async def get_backup(self, backup_id: str) -> dict | None:
+        rows = await self._get_rows("ai_config_backups", "id,label,payload,created_by,created_at",
+                                    filters={"id": f"eq.{backup_id}"})
+        return rows[0] if rows else None
+
+    async def delete_backup(self, backup_id: str) -> bool:
+        return await self._delete_row("ai_config_backups", "id", backup_id)
+
+    async def _get_rows(self, table: str, select: str, order: str = "",
+                        filters: dict | None = None) -> list[dict]:
+        url = f"{self.settings.supabase_url}/rest/v1/{table}"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        params = {"select": select}
+        if order:
+            params["order"] = order
+        params.update(filters or {})
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(url, params=params, headers=headers)
+            if response.status_code == 200:
+                return response.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("%s query failed: %s", table, type(exc).__name__)
+        return []
+
+    async def _insert_row(self, table: str, row: dict) -> bool:
+        url = f"{self.settings.supabase_url}/rest/v1/{table}"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+            "Prefer": "return=minimal",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(url, json=row, headers=headers)
+            return response.status_code in (200, 201)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("%s insert failed: %s", table, type(exc).__name__)
+            return False
+
+    async def _delete_row(self, table: str, column: str, value: str) -> bool:
+        url = f"{self.settings.supabase_url}/rest/v1/{table}"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.delete(
+                    url, params={column: f"eq.{value}"}, headers=headers)
+            return response.status_code in (200, 204)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("%s delete failed: %s", table, type(exc).__name__)
+            return False
+
+    async def daily_stats(self, days: int = 14) -> list[dict]:
+        url = f"{self.settings.supabase_url}/rest/v1/rpc/ai_daily_stats"
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.post(
+                    url, json={"p_days": days}, headers=headers)
+            if response.status_code == 200:
+                return response.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("daily stats failed: %s", type(exc).__name__)
+        return []
+
     async def list_profiles(self, limit: int = 100) -> list[dict]:
         url = f"{self.settings.supabase_url}/rest/v1/profiles"
         headers = {

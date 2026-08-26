@@ -112,7 +112,20 @@ input:focus,select:focus{border-color:var(--blue)}
 .p-item:hover{background:var(--panel2)}
 .p-item .cat{margin-left:auto;font-size:10px;color:var(--txt3);text-transform:uppercase}
 .toast{position:fixed;bottom:24px;right:24px;background:var(--panel);border:1px solid var(--line2);border-left:3px solid var(--green);padding:12px 18px;border-radius:9px;font-size:13px;z-index:200;box-shadow:0 10px 40px rgba(0,0,0,.5)}
-.skel{background:linear-gradient(90deg,#141b2b,#1b2436,#141b2b);background-size:200% 100%;animation:sk 1.2s infinite;border-radius:6px;height:14px}
+[data-tip]{position:relative;cursor:help;border-bottom:1px dashed #3b465e}
+[data-tip]:hover::after{content:attr(data-tip);position:absolute;bottom:130%;left:50%;transform:translateX(-50%);
+ background:#1d2740;color:#dbe3f5;padding:7px 11px;border-radius:7px;font-size:11.5px;white-space:pre-wrap;
+ width:max-content;max-width:280px;border:1px solid var(--line2);z-index:300;box-shadow:0 8px 30px rgba(0,0,0,.5);text-align:left}
+.info-btn{background:var(--panel2);border:1px solid var(--line2);color:var(--cyan);border-radius:50%;
+ width:26px;height:26px;font-size:13px;cursor:pointer;flex-shrink:0}
+.info-btn:hover{border-color:var(--cyan)}
+.modal-card{width:620px;max-width:94vw;background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:26px;box-shadow:0 24px 80px rgba(0,0,0,.6);max-height:74vh;overflow-y:auto}
+.modal-card h3{font-size:17px;margin-bottom:4px}
+.modal-card h4{font-size:12px;color:var(--cyan);text-transform:uppercase;letter-spacing:1px;margin:16px 0 6px}
+.modal-card p,.modal-card li{font-size:13px;color:var(--txt2)}
+.modal-card ul{padding-left:18px;margin:4px 0}
+.modal-card b{color:var(--txt)}
+.skem{background:linear-gradient(90deg,#141b2b,#1b2436,#141b2b);background-size:200% 100%;animation:sk 1.2s infinite;border-radius:6px;height:14px}
 @keyframes sk{0%{background-position:200% 0}100%{background-position:-200% 0}}
 </style></head><body>
 
@@ -173,14 +186,17 @@ function buildNav(){
     }
   }
 }
-const BUILT = new Set(['dashboard','models','providers','usagelimits','status','analytics','activity','apikeys','ratelimits','quotas','subscriptions','teams','prompts','routing','agentcfg','settings']);
+const BUILT = new Set(['dashboard','models','providers','usagelimits','status','analytics','activity','apikeys','ratelimits','quotas','subscriptions','teams','prompts','routing','agentcfg','settings','webhooks','integrations','backups']);
 const LABELS = Object.fromEntries(NAV.flatMap(([,items])=>items));
 
 function render(){
   const page = ROUTE.page;
   const t = TITLES[page] || [LABELS[page]||page, 'Part of the Nexa control plane roadmap.'];
   $('#crumbs').innerHTML = `Nexa Command Center / <b>${esc(t[0])}</b>`;
-  $('#content').innerHTML = `<div class="head-row"><div><h1 class="page">${esc(t[0])}</h1><div class="sub">${esc(t[1])}</div></div><div id="head-actions"></div></div><div id="page"></div>`;
+  $('#content').innerHTML = `<div class="head-row"><div style="display:flex;align-items:center;gap:12px">
+   <div><h1 class="page">${esc(t[0])}</h1><div class="sub">${esc(t[1])}</div></div>
+   <button class="info-btn" title="About this page" onclick="showPageInfo('${page}')">i</button></div>
+   <div id="head-actions"></div></div><div id="page"></div>`;
   if (page==='dashboard') renderDashboard();
   else if (page==='models') renderModels();
   else if (page==='providers') renderProviders();
@@ -197,6 +213,9 @@ function render(){
   else if (page==='routing') renderConfig('routing_rules', 'Routing Rules');
   else if (page==='agentcfg') renderConfig('agent_config', 'Agent Configuration');
   else if (page==='settings') renderSettings();
+  else if (page==='webhooks') renderWebhooks();
+  else if (page==='integrations') renderIntegrations();
+  else if (page==='backups') renderBackups();
   else roadmap(t[0]);
 }
 function roadmap(title){
@@ -551,6 +570,174 @@ async function renderSettings(){
   <tr><td>Admin API</td><td class="mono">/v1/admin/* (token-gated)</td></tr>
   </tbody></table>
   <p style="font-size:11px;color:var(--txt3);margin-top:10px">Secrets are environment-only and never displayed.</p></div>`;
+}
+
+/* ================= page info ================= */
+const PAGE_INFO = {
+  dashboard: {purpose:'Operational overview of the entire Nexa gateway, updated live from gateway accounting.',
+    sections:{KPIs:'Models, providers, requests today and token consumption across all accounts.', 'Model Distribution':'Enabled models grouped by provider.', 'Top Models':'Highest-traffic models today with request share.', 'Recent Activity':'Latest requests with request IDs for support lookups.'}},
+  models: {purpose:'Create, edit and retire every AI model available to NexCoder clients. This is the authoritative catalog — the model picker in NexCoder mirrors it within ~30 seconds.',
+    sections:{Context:'Maximum tokens per request for the model. Applied automatically in NexCoder when the model is selected.', 'Max Out':'Cap on generated (output) tokens per response.', 'Min Plan':'Lowest subscription tier allowed to use the model. Lower-tier clients see an Upgrade badge.', Provider:'Which AI provider serves the model (nvidia or openrouter).', Enabled:'Disabled models disappear from client pickers and requests are rejected.'}},
+  providers: {purpose:'Connection status and credential state for each configured AI provider.',
+    sections:{Credential:'Configured means the API key exists in the service environment. Values are never displayed.', Models:'Number of catalog models routed through this provider.'}},
+  usagelimits: {purpose:'Token allowances per subscription plan and live consumption across all accounts.',
+    sections:{'5-Hour Window':'Fast-replenishing allowance; resets 5 hours after each account’s first request.', Daily:'Rolling 24-hour allowance.', Weekly:'7-day cycle with exactly one complimentary renewal.', 'Plan Allowances':'Edit in nexa/policies/plans.py or override per account in Rate Limits.'}},
+  activity: {purpose:'Full request history with request IDs for debugging and support.',
+    sections:{Filters:'Filter by model id and status. Combine with Ctrl+K for quick navigation.', Latency:'End-to-end gateway latency including the upstream provider call.'}},
+  apikeys: {purpose:'Issue and revoke gateway credentials for NexCoder builds and service clients.',
+    sections:{'Create':'Tokens are shown ONCE at creation and stored only as SHA-256 hashes — copy immediately.', Revoke:'Revocation is immediate; clients using the key get 401 on their next request.', 'Env Keys':'Legacy keys configured via the NEXA_GATEWAY_KEYS environment variable.'}},
+  ratelimits: {purpose:'Per-account limit overrides on top of plan defaults.',
+    sections:{RPM:'Requests per minute override.', RPH:'Requests per hour override.', Concurrent:'Simultaneous generations override.', 'Monthly tokens':'Monthly consumption cap override. Empty fields inherit plan defaults.'}},
+  subscriptions: {purpose:'Accounts, plans and Polar-managed subscriptions (read-only).', sections:{Accounts:'All registered profiles with their current plan.', Subscriptions:'Active subscription state synced from billing.'}},
+  teams: {purpose:'Organizations and their members, created through team checkout.', sections:{Members:'Role assignments per organization.'}},
+  prompts: {purpose:'The system prompt published to NexCoder clients via GET /v1/config/system_prompt.', sections:{Publish:'Saving here updates what every NexCoder agent uses as its base instructions on the next config refresh.'}},
+  routing: {purpose:'Model routing and failover rules published via GET /v1/config/routing_rules.', sections:{rules:'Ordered conditions such as model_unavailable → fallback model.'}},
+  agentcfg: {purpose:'Agent behavior configuration (iterations, planning, parallel tools, memory) published via GET /v1/config/agent_config.'},
+  settings: {purpose:'Service-level configuration overview. Secrets are environment-only and never displayed.'},
+  status: {purpose:'Infrastructure health per component.', sections:{Providers:'Operational means credentials are configured and reachable.'}},
+  analytics: {purpose:'Request and token trends.', sections:{'Per-Model Breakdown':'Request counts and share per model today.'}},
+  webhooks: {purpose:'Outgoing event notifications to external systems.', sections:{Events:'Subscribe a webhook to specific events (model.updated, provider.failure, usage.threshold).', Test:'Sends a test POST to verify reachability.'}},
+  integrations: {purpose:'Connect external systems (Slack, Discord, monitoring) via incoming webhook URLs.', sections:{Configure:'Stores the integration webhook URL; alerts are POSTed to it.'}},
+  backups: {purpose:'Point-in-time snapshots of the full configuration (catalog, limits, prompts, routing, integrations).', sections:{Create:'Captures the current configuration state.', Restore:'Applies a snapshot back over the live configuration — confirm before running.'}},
+};
+function showPageInfo(page){
+  const info = PAGE_INFO[page] || {purpose:'Nexa control plane page.', sections:{}};
+  const sections = Object.entries(info.sections||{}).map(([k,v])=>`<h4>${esc(k)}</h4><p>${esc(v)}</p>`).join('');
+  overlay(`<div class="modal-bg" onclick="closeOverlay()"></div>
+  <div class="modal-card" style="position:fixed;top:12vh;left:50%;transform:translateX(-50%);z-index:130">
+   <div style="display:flex;justify-content:space-between;align-items:center"><h3>About — ${esc(LABELS[page]||page)}</h3>
+   <button class="tbtn" onclick="closeOverlay()">✕</button></div>
+   <h4>Purpose</h4><p>${esc(info.purpose)}</p>
+   ${sections}
+   <p style="margin-top:14px;font-size:11px;color:var(--txt3)">All values shown are served by the Nexa gateway and are authoritative. Client apps read this configuration automatically.</p>
+  </div>`);
+}
+
+/* ================= webhooks ================= */
+const WEBHOOK_EVENTS = ['model.updated','provider.failure','usage.threshold','key.created','key.revoked','config.published'];
+async function renderWebhooks(){
+  let data;
+  try { data = await api('/admin/webhooks'); } catch(e){ $('#page').innerHTML = errState('Unable to load webhooks', e.message); return; }
+  $('#head-actions').innerHTML = `<button class="btn" onclick="showWebhookForm()">+ Add Webhook</button>`;
+  $('#page').innerHTML = `<div class="card"><div class="panel-title">Configured Webhooks</div>
+  <div class="panel-sub">POSTed JSON events on subscription. Secrets are used as the signing key.</div>
+  <table><thead><tr><th>URL</th><th>Events</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+  ${(data.webhooks||[]).map(w=>`<tr><td class="mono" style="max-width:320px;overflow:hidden;text-overflow:ellipsis">${esc(w.url)}</td>
+   <td>${(w.events||[]).map(e=>`<span class="badge b">${esc(e)}</span>`).join(' ')}</td>
+   <td><span class="badge ${w.enabled?'g':'r'}">${w.enabled?'Enabled':'Disabled'}</span></td>
+   <td style="text-align:right"><button class="btn danger sm" onclick="delWebhook('${w.id}')">Delete</button></td></tr>`).join('')
+   || '<tr><td colspan=4 style="color:var(--txt2)">No webhooks configured.</td></tr>'}
+  </tbody></table></div><div id="hook-form"></div>`;
+}
+function showWebhookForm(){
+  document.getElementById('hook-form').innerHTML = `<div class="card" style="margin-top:14px">
+  <div class="panel-title">Add Webhook</div>
+  <div class="row" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px">
+   <input id="wh-url" placeholder="https://hooks.example.com/nexa" style="width:320px">
+   <input id="wh-secret" placeholder="Signing secret (optional)" style="width:200px">
+   <button class="btn" onclick="createWebhook()">Add</button></div>
+  <div class="checks" style="margin-top:10px">${WEBHOOK_EVENTS.map(e=>`<label><input type="checkbox" class="wh-ev" value="${e}" checked>${e}</label>`).join('')}</div>
+  <div id="wh-out" style="margin-top:10px"></div></div>`;
+}
+async function createWebhook(){
+  const events = [...document.querySelectorAll('.wh-ev:checked')].map(i=>i.value);
+  try {
+    await api('/admin/webhooks', {method:'POST', body: JSON.stringify({
+      url: document.getElementById('wh-url').value,
+      secret: document.getElementById('wh-secret').value, events})});
+    toast('Webhook added'); renderWebhooks();
+  } catch(e){ toast('Failed: '+e.message,'r'); }
+}
+async function delWebhook(id){
+  if (!confirm('Delete this webhook?')) return;
+  try { await api('/admin/webhooks/'+id, {method:'DELETE'}); toast('Deleted'); renderWebhooks(); }
+  catch(e){ toast('Failed: '+e.message,'r'); }
+}
+
+/* ================= integrations ================= */
+const INTEGRATIONS = [
+ ['Slack','Post usage alerts and incidents to a Slack channel via Incoming Webhook.','💬'],
+ ['Discord','Gateway events into a Discord channel via webhook.','🎮'],
+ ['Custom Monitoring','Generic JSON webhook for Prometheus/Grafana alertmanager pipelines.','📡'],
+];
+async function renderIntegrations(){
+  let cfg;
+  try { cfg = await api('/admin/config/integrations'); } catch(e){ cfg = {value:{}}; }
+  const saved = cfg.value || {};
+  $('#page').innerHTML = `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))">
+  ${INTEGRATIONS.map(([name,desc,ico])=>{
+    const url = saved[name] || '';
+    return `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center">
+     <b>${ico} ${name}</b><span class="badge ${url?'g':'gr'}">${url?'Connected':'Available'}</span></div>
+     <p style="color:var(--txt2);font-size:12px;margin:8px 0">${desc}</p>
+     <div style="display:flex;gap:8px"><input id="int-${name.replace(/\s/g,'')}" value="${esc(url)}" placeholder="Webhook URL" style="flex:1">
+     <button class="btn sm" onclick="saveIntegration('${name}')">Save</button>
+     ${url?`<button class="btn ghost sm" onclick="testIntegration('${name}')">Test</button>`:''}</div></div>`;
+  }).join('')}</div>
+  <div class="card" style="margin-top:14px"><div class="panel-title">Coming Soon</div><div class="panel-sub">GitHub · Email (SES) · PagerDuty · Billing sync — roadmap.</div></div>`;
+}
+async function saveIntegration(name){
+  const url = document.getElementById('int-'+name.replace(/\s/g,'')).value;
+  let cfg = {}; try { cfg = (await api('/admin/config/integrations')).value || {}; } catch(e){}
+  cfg[name] = url;
+  try { await api('/admin/config/integrations', {method:'PUT', body: JSON.stringify({value: cfg})}); toast('Integration saved'); }
+  catch(e){ toast('Failed: '+e.message,'r'); }
+}
+async function testIntegration(name){
+  let cfg = {}; try { cfg = (await api('/admin/config/integrations')).value || {}; } catch(e){}
+  const url = cfg[name]; if (!url) return;
+  const r = await api('/admin/webhooks/test', {method:'POST', body: JSON.stringify({url})});
+  toast(r.success ? `Test delivered (HTTP ${r.status})` : 'Test failed: '+(r.error||'unreachable'), r.success?'g':'r');
+}
+
+/* ================= backups ================= */
+async function renderBackups(){
+  let data;
+  try { data = await api('/admin/backups'); } catch(e){ $('#page').innerHTML = errState('Unable to load backups', e.message); return; }
+  $('#head-actions').innerHTML = `<button class="btn" onclick="createBackup()">+ Create Backup</button>`;
+  $('#page').innerHTML = `<div class="card"><div class="panel-title">Configuration Snapshots</div>
+  <div class="panel-sub">Each backup captures the model catalog, limits, prompts, routing and integrations. Restoring overwrites the live configuration.</div>
+  <table><thead><tr><th>Label</th><th>Created</th><th>By</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+  ${(data.backups||[]).map(b=>`<tr><td>${esc(b.label)}</td><td style="color:var(--txt2)">${(b.created_at||'').replace('T',' ').slice(0,19)}</td>
+   <td>${esc(b.created_by||'')}</td>
+   <td style="text-align:right;white-space:nowrap">
+    <button class="btn ghost sm" onclick="downloadBackup('${b.id}')">Download</button>
+    <button class="btn ghost sm" onclick="restoreBackup('${b.id}')">Restore</button>
+    <button class="btn danger sm" onclick="delBackup('${b.id}')">Delete</button></td></tr>`).join('')
+   || '<tr><td colspan=4 style="color:var(--txt2)">No backups yet — create one before making large changes.</td></tr>'}
+  </tbody></table></div>`;
+}
+async function createBackup(){
+  try { await api('/admin/backups', {method:'POST'}); toast('Backup created'); renderBackups(); }
+  catch(e){ toast('Failed: '+e.message,'r'); }
+}
+async function downloadBackup(id){
+  const b = await api('/admin/backups/'+id);
+  const blob = new Blob([JSON.stringify(b, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = `nexa-backup-${id.slice(0,8)}.json`; a.click();
+}
+async function restoreBackup(id){
+  if (!confirm('Restore this snapshot? The current configuration (catalog, limits, prompts, routing) will be OVERWRITTEN.')) return;
+  try {
+    const b = await api('/admin/backups/'+id);
+    const p = b.payload || {};
+    for (const m of (p.catalog||[])) {
+      await api('/admin/catalog/'+encodeURIComponent(m.logical_id||m.id), {method:'PUT', body: JSON.stringify(m)});
+    }
+    for (const key of ['system_prompt','routing_rules','agent_config','integrations']) {
+      if (p[key]) await api('/admin/config/'+key, {method:'PUT', body: JSON.stringify({value: p[key]})});
+    }
+    for (const l of (p.limits||[])) {
+      await api('/admin/limits/'+encodeURIComponent(l.account_id), {method:'PUT', body: JSON.stringify(l)});
+    }
+    toast('Backup restored'); renderBackups();
+  } catch(e){ toast('Restore failed: '+e.message,'r'); }
+}
+async function delBackup(id){
+  if (!confirm('Delete this backup permanently?')) return;
+  try { await api('/admin/backups/'+id, {method:'DELETE'}); toast('Deleted'); renderBackups(); }
+  catch(e){ toast('Failed: '+e.message,'r'); }
 }
 
 /* ================= palette & overlay ================= */
